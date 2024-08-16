@@ -1,3 +1,4 @@
+#![allow(unused)]
 use std::fmt::{self, Display, Formatter};
 
 #[derive(Debug)]
@@ -36,7 +37,7 @@ pub struct Mov {
 
 impl Display for Mov {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "mov {}, {}\n", self.exp, self.reg)
+        writeln!(f, "mov {}, {}", self.exp, self.reg)
     }
 }
 

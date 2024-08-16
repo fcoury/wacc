@@ -26,7 +26,7 @@ pub struct Parser<'a> {
 }
 
 impl Parser<'_> {
-    pub fn new<'a>(tokens: &'a [Token]) -> Parser<'a> {
+    pub fn new(tokens: &[Token]) -> Parser<'_> {
         Parser { tokens }
     }
 

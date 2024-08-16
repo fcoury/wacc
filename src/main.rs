@@ -47,14 +47,14 @@ fn main() -> anyhow::Result<()> {
 
 fn preprocess(input: &Path, output: &Path) -> anyhow::Result<ExitStatus> {
     println!("input: {:?} output: {:?}", input, output);
-    Ok(Command::new("gcc")
+    Command::new("gcc")
         .arg("-E")
         .arg("-P")
         .arg(input)
         .arg("-o")
         .arg(output)
         .status()
-        .context("Failed to preprocess file")?)
+        .context("Failed to preprocess file")
 }
 
 fn compile(input_file: &Path) -> anyhow::Result<()> {
