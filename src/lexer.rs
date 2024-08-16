@@ -2,12 +2,7 @@ use regex::Regex;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
-pub struct Lexer<'a> {
-    input: &'a str,
-    pos: usize,
-}
-
-#[derive(EnumIter, Debug)]
+#[derive(EnumIter, Debug, PartialEq)]
 #[allow(unused)]
 pub enum Token {
     // keywords come first
@@ -25,23 +20,32 @@ pub enum Token {
     // then identifiers and constants
     Identifier(String),
     Constant(i32),
+
+    // others
+    Eof,
 }
 
 impl Token {
-    fn regex(&self) -> Regex {
+    fn regex(&self) -> Option<Regex> {
         match self {
-            Token::Identifier(_) => Regex::new(r"^[a-zA-Z_]\w*\b").unwrap(),
-            Token::Constant(_) => Regex::new(r"^[0-9]+\b").unwrap(),
-            Token::Int => Regex::new(r"^int\b").unwrap(),
-            Token::Void => Regex::new(r"^void\b").unwrap(),
-            Token::Return => Regex::new(r"^return\b").unwrap(),
-            Token::OpenParen => Regex::new(r"^\(").unwrap(),
-            Token::CloseParen => Regex::new(r"^\)").unwrap(),
-            Token::OpenBrace => Regex::new(r"^\{").unwrap(),
-            Token::CloseBrace => Regex::new(r"^\}").unwrap(),
-            Token::Semicolon => Regex::new(r"^;").unwrap(),
+            Token::Identifier(_) => Some(Regex::new(r"^[a-zA-Z_]\w*\b").unwrap()),
+            Token::Constant(_) => Some(Regex::new(r"^[0-9]+\b").unwrap()),
+            Token::Int => Some(Regex::new(r"^int\b").unwrap()),
+            Token::Void => Some(Regex::new(r"^void\b").unwrap()),
+            Token::Return => Some(Regex::new(r"^return\b").unwrap()),
+            Token::OpenParen => Some(Regex::new(r"^\(").unwrap()),
+            Token::CloseParen => Some(Regex::new(r"^\)").unwrap()),
+            Token::OpenBrace => Some(Regex::new(r"^\{").unwrap()),
+            Token::CloseBrace => Some(Regex::new(r"^\}").unwrap()),
+            Token::Semicolon => Some(Regex::new(r"^;").unwrap()),
+            _ => None,
         }
     }
+}
+
+pub struct Lexer<'a> {
+    input: &'a str,
+    pos: usize,
 }
 
 impl<'a> Lexer<'a> {
@@ -60,21 +64,23 @@ impl<'a> Lexer<'a> {
             let mut matched = false;
             for typ in Token::iter() {
                 let regex = typ.regex();
-                if let Some(mat) = regex.find(&self.input[self.pos..]) {
-                    let token_str = mat.as_str();
-                    self.pos += token_str.len();
-                    // println!("token_str: {token_str}");
-                    // println!("rest: {:?}\n", &self.input[self.pos..]);
+                if let Some(regex) = regex {
+                    if let Some(mat) = regex.find(&self.input[self.pos..]) {
+                        let token_str = mat.as_str();
+                        self.pos += token_str.len();
+                        // println!("token_str: {token_str}");
+                        // println!("rest: {:?}\n", &self.input[self.pos..]);
 
-                    let token = match typ {
-                        Token::Identifier(_) => Token::Identifier(token_str.to_string()),
-                        Token::Constant(_) => Token::Constant(token_str.parse().unwrap()),
-                        typ => typ,
-                    };
-                    // println!("Token: {} => {:?}", token_str, token);
-                    tokens.push(token);
-                    matched = true;
-                    break;
+                        let token = match typ {
+                            Token::Identifier(_) => Token::Identifier(token_str.to_string()),
+                            Token::Constant(_) => Token::Constant(token_str.parse().unwrap()),
+                            typ => typ,
+                        };
+                        // println!("Token: {} => {:?}", token_str, token);
+                        tokens.push(token);
+                        matched = true;
+                        break;
+                    }
                 }
             }
 
@@ -86,6 +92,8 @@ impl<'a> Lexer<'a> {
                 ));
             }
         }
+
+        tokens.push(Token::Eof);
 
         Ok(tokens)
     }
