@@ -1,7 +1,9 @@
+mod assembler;
 mod lexer;
 mod parser;
 
 use anyhow::Context;
+use assembler::Assembler;
 use clap::Parser;
 use lexer::Lexer;
 use std::{
@@ -18,6 +20,10 @@ struct Args {
     /// run the lexer and parser, stop before assembly
     #[clap(long)]
     parse: bool,
+
+    // run lexer, parser, and assembly, stop before code generation
+    #[clap(long)]
+    codegen: bool,
 
     /// the file to parse
     input: PathBuf,
@@ -60,12 +66,16 @@ fn compile(input_file: &Path) -> anyhow::Result<()> {
     let mut lexer = Lexer::new(&input);
     let tokens = lexer.run().context("Failed to lex file")?;
     std::fs::remove_file(input_file).context("Failed to delete input file")?;
+    println!("Tokens: {:#?}", tokens);
 
     let mut parser = crate::parser::Parser::new(&tokens);
     let ast = parser.run().context("Failed to parse file")?;
-
-    println!("Tokens: {:#?}", tokens);
     println!("AST: {:#?}", ast);
+
+    let assembler = Assembler::new(ast);
+    let assembly = assembler.run().context("Failed to assemble file")?;
+
+    println!("Assembly: {:#?}", assembly);
 
     Ok(())
 }

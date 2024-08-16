@@ -2,7 +2,7 @@ use crate::lexer::Token;
 
 #[derive(Debug)]
 pub struct Program {
-    function_definition: Function,
+    pub function_definition: Function,
 }
 
 #[derive(Debug)]
