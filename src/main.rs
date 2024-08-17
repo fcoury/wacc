@@ -39,7 +39,7 @@ fn main() -> anyhow::Result<()> {
         exit(1);
     }
 
-    compile(&preprocessed_file)?;
+    compile(&preprocessed_file, args.lex, args.parse, args.codegen)?;
 
     Ok(())
 }
@@ -56,7 +56,7 @@ fn preprocess(input: &Path, output: &Path) -> anyhow::Result<ExitStatus> {
         .context("Failed to preprocess file")
 }
 
-fn compile(input_file: &Path) -> anyhow::Result<()> {
+fn compile(input_file: &Path, lex: bool, parse: bool, codegen: bool) -> anyhow::Result<()> {
     let input = std::fs::read_to_string(input_file).unwrap_or_else(|err| {
         eprintln!("Error reading file: {}", err);
         exit(1);
@@ -67,13 +67,25 @@ fn compile(input_file: &Path) -> anyhow::Result<()> {
     std::fs::remove_file(input_file).context("Failed to delete input file")?;
     println!("Tokens: {:#?}", tokens);
 
+    if lex {
+        return Ok(());
+    }
+
     let mut parser = crate::parser::Parser::new(&tokens);
     let ast = parser.run().context("Failed to parse file")?;
     println!("AST: {:#?}", ast);
 
+    if parse {
+        return Ok(());
+    }
+
     let assembler = Assembler::new(ast);
     let assembly = assembler.run().context("Failed to assemble file")?;
     println!("Assembly: {:#?}", assembly);
+
+    if codegen {
+        return Ok(());
+    }
 
     let code = assembly.to_string();
     println!("Code:\n{}", code);
