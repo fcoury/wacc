@@ -17,8 +17,15 @@ pub struct Statement {
 }
 
 #[derive(Debug)]
-pub struct Exp {
-    pub constant: i32,
+pub enum Exp {
+    Constant(i32),
+    Unary(UnaryOperator, Box<Exp>),
+}
+
+#[derive(Debug)]
+pub enum UnaryOperator {
+    Complement,
+    Negate,
 }
 
 pub struct Parser<'a> {
@@ -44,7 +51,7 @@ impl Parser<'_> {
     }
 
     pub fn parse_function(&mut self) -> anyhow::Result<Function> {
-        self.expect(Token::Int)?;
+        self.expect(Token::IntKeyword)?;
         let name = self.parse_identifier()?;
         self.expect(Token::OpenParen)?;
         self.expect(Token::Void)?;
@@ -74,6 +81,42 @@ impl Parser<'_> {
         })
     }
 
+    pub fn parse_exp(&mut self) -> anyhow::Result<Exp> {
+        let next_token = self.peek();
+        if let Token::Int(val) = self.tokens[0] {
+            self.tokens = &self.tokens[1..];
+            Ok(Exp::Constant(val))
+        } else if next_token == Some(Token::Tilde) || next_token == Some(Token::Hyphen) {
+            let operator = self.parse_unary_operator()?;
+            let operand = Box::new(self.parse_exp()?);
+            Ok(Exp::Unary(operator, operand))
+        } else if next_token == Some(Token::OpenParen) {
+            self.take_token();
+            let exp = self.parse_exp()?;
+            self.expect(Token::CloseParen)?;
+            Ok(exp)
+        } else {
+            anyhow::bail!(
+                "Expected constant or unary operator, found {:?}",
+                self.tokens[0]
+            );
+        }
+    }
+
+    pub fn parse_unary_operator(&mut self) -> anyhow::Result<UnaryOperator> {
+        match self.tokens[0] {
+            Token::Tilde => {
+                self.tokens = &self.tokens[1..];
+                Ok(UnaryOperator::Complement)
+            }
+            Token::Hyphen => {
+                self.tokens = &self.tokens[1..];
+                Ok(UnaryOperator::Negate)
+            }
+            _ => anyhow::bail!("Expected unary operator, found {:?}", self.tokens[0]),
+        }
+    }
+
     pub fn expect(&mut self, expected: Token) -> anyhow::Result<()> {
         if self.tokens.is_empty() {
             anyhow::bail!("Unexpected end of input");
@@ -87,12 +130,11 @@ impl Parser<'_> {
         }
     }
 
-    pub fn parse_exp(&mut self) -> anyhow::Result<Exp> {
-        if let Token::Constant(val) = self.tokens[0] {
-            self.tokens = &self.tokens[1..];
-            Ok(Exp { constant: val })
-        } else {
-            anyhow::bail!("Expected constant, found {:?}", self.tokens[0]);
-        }
+    fn peek(&self) -> Option<Token> {
+        self.tokens.get(0).cloned()
+    }
+
+    fn take_token(&mut self) {
+        self.tokens = &self.tokens[1..];
     }
 }

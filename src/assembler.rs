@@ -133,9 +133,10 @@ impl Display for Exp {
 
 impl From<crate::parser::Exp> for Exp {
     fn from(exp: crate::parser::Exp) -> Self {
-        Exp::Imm(Imm {
-            value: exp.constant,
-        })
+        todo!()
+        // Exp::Imm(Imm {
+        //     value: exp.constant,
+        // })
     }
 }
 

@@ -2,13 +2,18 @@ use regex::Regex;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
-#[derive(EnumIter, Debug, PartialEq)]
+#[derive(EnumIter, Debug, PartialEq, Clone)]
 #[allow(unused)]
 pub enum Token {
     // keywords come first
-    Int,
+    IntKeyword,
     Void,
     Return,
+
+    // then operators
+    TwoHyphens,
+    Tilde,
+    Hyphen,
 
     // then single character tokens
     OpenParen,
@@ -19,7 +24,7 @@ pub enum Token {
 
     // then identifiers and constants
     Identifier(String),
-    Constant(i32),
+    Int(i32),
 
     // others
     Eof,
@@ -29,10 +34,13 @@ impl Token {
     fn regex(&self) -> Option<Regex> {
         match self {
             Token::Identifier(_) => Some(Regex::new(r"^[a-zA-Z_]\w*\b").unwrap()),
-            Token::Constant(_) => Some(Regex::new(r"^[0-9]+\b").unwrap()),
-            Token::Int => Some(Regex::new(r"^int\b").unwrap()),
+            Token::Int(_) => Some(Regex::new(r"^[0-9]+\b").unwrap()),
+            Token::IntKeyword => Some(Regex::new(r"^int\b").unwrap()),
             Token::Void => Some(Regex::new(r"^void\b").unwrap()),
             Token::Return => Some(Regex::new(r"^return\b").unwrap()),
+            Token::TwoHyphens => Some(Regex::new(r"^\-\-").unwrap()),
+            Token::Tilde => Some(Regex::new(r"^\~").unwrap()),
+            Token::Hyphen => Some(Regex::new(r"^\-").unwrap()),
             Token::OpenParen => Some(Regex::new(r"^\(").unwrap()),
             Token::CloseParen => Some(Regex::new(r"^\)").unwrap()),
             Token::OpenBrace => Some(Regex::new(r"^\{").unwrap()),
@@ -73,7 +81,7 @@ impl<'a> Lexer<'a> {
 
                         let token = match typ {
                             Token::Identifier(_) => Token::Identifier(token_str.to_string()),
-                            Token::Constant(_) => Token::Constant(token_str.parse().unwrap()),
+                            Token::Int(_) => Token::Int(token_str.parse().unwrap()),
                             typ => typ,
                         };
                         // println!("Token: {} => {:?}", token_str, token);
