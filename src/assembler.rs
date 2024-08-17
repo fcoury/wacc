@@ -99,7 +99,9 @@ impl From<crate::parser::Statement> for Vec<Instruction> {
     fn from(statement: crate::parser::Statement) -> Self {
         vec![
             Instruction::Mov(Mov {
-                exp: statement.return_exp.into(),
+                exp: match statement {
+                    crate::parser::Statement::Return(exp) => exp.into(),
+                },
                 reg: Register,
             }),
             Instruction::Ret(Ret),

@@ -12,8 +12,8 @@ pub struct Function {
 }
 
 #[derive(Debug)]
-pub struct Statement {
-    pub return_exp: Exp,
+pub enum Statement {
+    Return(Exp),
 }
 
 #[derive(Debug)]
@@ -76,9 +76,7 @@ impl Parser<'_> {
         self.expect(Token::Return)?;
         let return_val = self.parse_exp()?;
         self.expect(Token::Semicolon)?;
-        Ok(Statement {
-            return_exp: return_val,
-        })
+        Ok(Statement::Return(return_val))
     }
 
     pub fn parse_exp(&mut self) -> anyhow::Result<Exp> {
@@ -91,7 +89,7 @@ impl Parser<'_> {
             let operand = Box::new(self.parse_exp()?);
             Ok(Exp::Unary(operator, operand))
         } else if next_token == Some(Token::OpenParen) {
-            self.take_token();
+            self.take_token(); // skips OpenParen
             let exp = self.parse_exp()?;
             self.expect(Token::CloseParen)?;
             Ok(exp)
