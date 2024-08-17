@@ -39,7 +39,6 @@ fn main() -> anyhow::Result<()> {
         exit(1);
     }
 
-    // TODO: run the compiler to assembly
     compile(&preprocessed_file)?;
 
     Ok(())
@@ -74,8 +73,31 @@ fn compile(input_file: &Path) -> anyhow::Result<()> {
 
     let assembler = Assembler::new(ast);
     let assembly = assembler.run().context("Failed to assemble file")?;
-
     println!("Assembly: {:#?}", assembly);
+
+    let code = assembly.to_string();
+    println!("Code:\n{}", code);
+
+    let assembly_file = input_file.with_extension("s");
+    std::fs::write(&assembly_file, code).context("Failed to write assembly file")?;
+    build(&assembly_file)?;
+
+    Ok(())
+}
+
+fn build(assembly_file: &Path) -> anyhow::Result<()> {
+    let output_file = assembly_file.with_extension("");
+    let status = Command::new("gcc")
+        .arg(assembly_file)
+        .arg("-o")
+        .arg(output_file)
+        .status()
+        .context("Failed to compile assembly file")?;
+
+    if !status.success() {
+        eprintln!("Failed to compile assembly file");
+        exit(1);
+    }
 
     Ok(())
 }

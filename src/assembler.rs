@@ -14,6 +14,14 @@ impl From<crate::parser::Program> for Program {
     }
 }
 
+impl Display for Program {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "{}", self.function_definition);
+        #[cfg(target_os = "linux")]
+        writeln!(f, "\t.section .note.GNU-stack,\"\",@progbits")
+    }
+}
+
 #[derive(Debug)]
 pub struct Function {
     pub name: String,
@@ -29,6 +37,17 @@ impl From<crate::parser::Function> for Function {
     }
 }
 
+impl Display for Function {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        writeln!(f, "\t.globl {}", self.name)?;
+        writeln!(f, "{}:", self.name)?;
+        for instruction in &self.instructions {
+            writeln!(f, "\t{}", instruction)?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug)]
 pub struct Mov {
     pub exp: Exp,
@@ -37,7 +56,7 @@ pub struct Mov {
 
 impl Display for Mov {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        writeln!(f, "mov {}, {}", self.exp, self.reg)
+        write!(f, "movl {}, {}", self.exp, self.reg)
     }
 }
 
@@ -57,7 +76,7 @@ pub struct Imm {
 
 impl Display for Imm {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "{}", self.value)
+        write!(f, "${}", self.value)
     }
 }
 
@@ -66,7 +85,7 @@ pub struct Register;
 
 impl Display for Register {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "eax")
+        write!(f, "%eax")
     }
 }
 
@@ -107,7 +126,7 @@ impl Display for Exp {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
             Exp::Imm(imm) => write!(f, "{}", imm),
-            Exp::Register => write!(f, "eax"),
+            Exp::Register => write!(f, "%eax"),
         }
     }
 }
