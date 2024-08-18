@@ -1,5 +1,8 @@
 #![allow(unused)]
-use std::fmt::{self, Display, Formatter};
+use std::{
+    collections::HashMap,
+    fmt::{self, Display, Formatter},
+};
 
 use crate::ir;
 
@@ -116,9 +119,9 @@ impl From<ir::Instruction> for Vec<Instruction> {
 impl Display for Instruction {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
-            Instruction::Mov(src, dst) => todo!(),
+            Instruction::Mov(src, dst) => write!(f, "movl {}, {}", src, dst),
             Instruction::Unary(_, _) => todo!(),
-            Instruction::AllocateStack(size) => todo!(),
+            Instruction::AllocateStack(size) => write!(f, "subq ${}, %rsp", size),
             Instruction::Ret(ret) => write!(f, "{}", ret),
         }
     }
@@ -176,14 +179,166 @@ impl Assembler {
         Assembler { program }
     }
 
-    pub fn run(self) -> anyhow::Result<Program> {
-        Ok(self.program.into())
+    pub fn run(&self) -> anyhow::Result<Program> {
+        let program = self.program.clone().into();
+        let program = self.replace_pseudoregisters(program);
+        let program = self.fix_instructions(program);
+        Ok(program)
+    }
+
+    pub fn fix_instructions(&self, program: Program) -> Program {
+        let instructions = program
+            .function_definition
+            .instructions
+            .into_iter()
+            .map(|instruction| match instruction {
+                Instruction::Mov(src, dst) => match (src, dst) {
+                    (Operand::Stack(src), Operand::Stack(dst)) => {
+                        vec![
+                            Instruction::Mov(Operand::Stack(src), Operand::Reg(Reg::R10)),
+                            Instruction::Mov(Operand::Reg(Reg::R10), Operand::Stack(dst)),
+                        ]
+                    }
+                    (src, dst) => vec![Instruction::Mov(src, dst)],
+                },
+                instr => vec![instr],
+            })
+            .flatten()
+            .collect();
+
+        Program {
+            function_definition: Function {
+                name: program.function_definition.name,
+                instructions,
+            },
+        }
+    }
+
+    pub fn replace_pseudoregisters(&self, program: Program) -> Program {
+        let mut stack_offset = 0;
+        let mut stack_map = HashMap::new();
+
+        let mut instructions = program
+            .function_definition
+            .instructions
+            .into_iter()
+            .map(|instruction| match instruction {
+                Instruction::Mov(src, dst) => {
+                    let src = match src {
+                        Operand::Pseudo(pseudo) => {
+                            if let Some(offset) = stack_map.get(&pseudo) {
+                                Operand::Stack(*offset)
+                            } else {
+                                stack_offset -= 4;
+                                stack_map.insert(pseudo.clone(), stack_offset);
+                                Operand::Stack(stack_offset)
+                            }
+                        }
+                        _ => src,
+                    };
+
+                    let dst = match dst {
+                        Operand::Pseudo(pseudo) => {
+                            if let Some(offset) = stack_map.get(&pseudo) {
+                                Operand::Stack(*offset)
+                            } else {
+                                stack_offset -= 4;
+                                stack_map.insert(pseudo.clone(), stack_offset);
+                                Operand::Stack(stack_offset)
+                            }
+                        }
+                        _ => dst,
+                    };
+
+                    Instruction::Mov(src, dst)
+                }
+                Instruction::Unary(op, operand) => {
+                    let operand = match operand {
+                        Operand::Pseudo(pseudo) => {
+                            if let Some(offset) = stack_map.get(&pseudo) {
+                                Operand::Stack(*offset)
+                            } else {
+                                stack_offset -= 4;
+                                stack_map.insert(pseudo.clone(), stack_offset);
+                                Operand::Stack(stack_offset)
+                            }
+                        }
+                        _ => operand,
+                    };
+
+                    Instruction::Unary(op, operand)
+                }
+                Instruction::AllocateStack(size) => {
+                    stack_offset -= size;
+                    Instruction::AllocateStack(size)
+                }
+                Instruction::Ret(ret) => Instruction::Ret(ret),
+            })
+            .collect::<Vec<_>>();
+
+        instructions.insert(0, Instruction::AllocateStack(-stack_offset));
+
+        let new_program = Program {
+            function_definition: Function {
+                name: program.function_definition.name,
+                instructions,
+            },
+        };
+
+        new_program
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_transpile() {
+        let ir = ir::Program {
+            function_definition: ir::Function {
+                name: "main".to_string(),
+                instructions: vec![
+                    ir::Instruction::Unary(
+                        ir::UnaryOperator::Negate,
+                        ir::Val::Constant(8),
+                        ir::Val::Var("tmp.0".to_string()),
+                    ),
+                    ir::Instruction::Unary(
+                        ir::UnaryOperator::Complement,
+                        ir::Val::Var("tmp.0".to_string()),
+                        ir::Val::Var("tmp.1".to_string()),
+                    ),
+                    ir::Instruction::Unary(
+                        ir::UnaryOperator::Negate,
+                        ir::Val::Var("tmp.1".to_string()),
+                        ir::Val::Var("tmp.2".to_string()),
+                    ),
+                    ir::Instruction::Return(ir::Val::Var("tmp.2".to_string())),
+                ],
+            },
+        };
+
+        let assembler = Assembler::new(ir);
+        let program = assembler.run().unwrap();
+        // assert_eq!(
+        //     program.function_definition,
+        //     Function {
+        //         name: "main".to_string(),
+        //         instructions: vec![
+        //             Instruction::AllocateStack(12),
+        //             Instruction::Mov(Operand::Imm(8), Operand::Stack(-4)),
+        //             Instruction::Unary(UnaryOperator::Neg, Operand::Stack(-4)),
+        //             Instruction::Mov(Operand::Stack(-4), Operand::Stack(-8)),
+        //             Instruction::Unary(UnaryOperator::Not, Operand::Stack(-8)),
+        //             Instruction::Mov(Operand::Stack(-8), Operand::Stack(-12)),
+        //             Instruction::Unary(UnaryOperator::Neg, Operand::Stack(-12)),
+        //             Instruction::Mov(Operand::Stack(-12), Operand::Reg(Reg::AX)),
+        //             Instruction::Ret(Ret),
+        //         ]
+        //     }
+        // );
+    }
 
     #[test]
     fn test_from_ret() {

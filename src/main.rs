@@ -109,6 +109,7 @@ fn compile(input_file: &Path, args: &Args) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[allow(unused)]
 fn build(assembly_file: &Path) -> anyhow::Result<()> {
     let output_file = assembly_file.with_extension("");
     let status = Command::new("gcc")
