@@ -22,13 +22,13 @@ struct Args {
     #[clap(long)]
     parse: bool,
 
-    // run lexer, parser, and assembly, stop before code generation
-    #[clap(long)]
-    codegen: bool,
-
-    // run lexer, parser, assembly and code generation, stop before TACKY ir
+    // run lexer, parser, TACKY ir, stop before assembly
     #[clap(long)]
     tacky: bool,
+
+    // run lexer, parser, TACKY ir and assembly, stop before code generation
+    #[clap(long)]
+    codegen: bool,
 
     /// the file to parse
     input: PathBuf,
@@ -91,16 +91,16 @@ fn compile(input_file: &Path, args: &Args) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // let assembler = Assembler::new(ast);
-    // let assembly = assembler.run().context("Failed to assemble file")?;
-    // println!("Assembly: {:#?}", assembly);
-    //
-    // let code = assembly.to_string();
-    // println!("Code:\n{}", code);
+    let assembler = Assembler::new(tacky);
+    let assembly = assembler.run().context("Failed to assemble file")?;
+    println!("Assembly: {:#?}", assembly);
 
     if args.codegen {
         return Ok(());
     }
+
+    // let code = assembly.to_string();
+    // println!("Code:\n{}", code);
 
     // let assembly_file = input_file.with_extension("s");
     // std::fs::write(&assembly_file, code).context("Failed to write assembly file")?;

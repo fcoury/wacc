@@ -19,16 +19,16 @@ impl From<parser::Program> for Program {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Function {
-    pub identifier: Identifier,
-    pub instruction: Vec<Instruction>,
+    pub name: Identifier,
+    pub instructions: Vec<Instruction>,
 }
 
 impl From<parser::Function> for Function {
     fn from(function: parser::Function) -> Self {
         let mut context = Context::new();
         Function {
-            identifier: function.name,
-            instruction: function.body.into_instructions(&mut context),
+            name: function.name,
+            instructions: function.body.into_instructions(&mut context),
         }
     }
 }
@@ -139,7 +139,7 @@ mod tests {
             },
         };
         let program = Ir::new(program).run();
-        let instr = program.function_definition.instruction;
+        let instr = program.function_definition.instructions;
 
         assert_eq!(
             instr.get(0).unwrap(),
@@ -159,7 +159,7 @@ mod tests {
             },
         };
         let program = Ir::new(program).run();
-        let instr = program.function_definition.instruction;
+        let instr = program.function_definition.instructions;
 
         assert_eq!(
             instr,
@@ -193,7 +193,7 @@ mod tests {
             },
         };
         let program = Ir::new(program).run();
-        let instr = program.function_definition.instruction;
+        let instr = program.function_definition.instructions;
 
         assert_eq!(
             instr,
