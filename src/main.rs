@@ -99,12 +99,12 @@ fn compile(input_file: &Path, args: &Args) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // let code = assembly.to_string();
-    // println!("Code:\n{}", code);
+    let code = assembly.to_string();
+    println!("Code:\n{}", code);
 
-    // let assembly_file = input_file.with_extension("s");
-    // std::fs::write(&assembly_file, code).context("Failed to write assembly file")?;
-    // build(&assembly_file)?;
+    let assembly_file = input_file.with_extension("s");
+    std::fs::write(&assembly_file, code).context("Failed to write assembly file")?;
+    build(&assembly_file)?;
 
     Ok(())
 }
