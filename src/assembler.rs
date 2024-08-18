@@ -53,6 +53,8 @@ impl Display for Function {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         writeln!(f, "\t.globl {}", self.name)?;
         writeln!(f, "{}:", self.name)?;
+        writeln!(f, "\tpushq\t%rbp")?;
+        writeln!(f, "\tmovq\t%rsp, %rbp")?;
         for instruction in &self.instructions {
             writeln!(f, "\t{}", instruction)?;
         }
@@ -68,7 +70,7 @@ pub struct Mov {
 
 impl Display for Mov {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "movl {}, {}", self.exp, self.reg)
+        writeln!(f, "\tmovl\t{}, {}", self.exp, self.reg)
     }
 }
 
@@ -77,7 +79,9 @@ pub struct Ret;
 
 impl Display for Ret {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "ret")
+        writeln!(f, "movq\t%rbp, %rsp")?;
+        writeln!(f, "\tpop\t%rbp")?;
+        writeln!(f, "\tret")
     }
 }
 
@@ -89,7 +93,10 @@ pub enum Reg {
 
 impl Display for Reg {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        todo!()
+        match self {
+            Reg::AX => write!(f, "%eax"),
+            Reg::R10 => write!(f, "%r10d"),
+        }
     }
 }
 
@@ -119,9 +126,9 @@ impl From<ir::Instruction> for Vec<Instruction> {
 impl Display for Instruction {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
-            Instruction::Mov(src, dst) => write!(f, "movl {}, {}", src, dst),
-            Instruction::Unary(_, _) => todo!(),
-            Instruction::AllocateStack(size) => write!(f, "subq ${}, %rsp", size),
+            Instruction::Mov(src, dst) => write!(f, "movl\t{}, {}", src, dst),
+            Instruction::Unary(operator, operand) => write!(f, "{}\t{}", operator, operand),
+            Instruction::AllocateStack(size) => write!(f, "subq\t${}, %rsp", size),
             Instruction::Ret(ret) => write!(f, "{}", ret),
         }
     }
@@ -142,6 +149,15 @@ impl From<ir::UnaryOperator> for UnaryOperator {
     }
 }
 
+impl Display for UnaryOperator {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self {
+            UnaryOperator::Neg => write!(f, "negl"),
+            UnaryOperator::Not => write!(f, "notl"),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub enum Operand {
     Imm(i32),
@@ -153,10 +169,10 @@ pub enum Operand {
 impl Display for Operand {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
-            Operand::Imm(imm) => write!(f, "{}", imm),
-            Operand::Reg(reg) => todo!(),
+            Operand::Imm(imm) => write!(f, "${}", imm),
+            Operand::Reg(reg) => write!(f, "{}", reg),
             Operand::Pseudo(pseudo) => write!(f, "{}", pseudo),
-            Operand::Stack(offset) => todo!(),
+            Operand::Stack(offset) => write!(f, "{}(%rbp)", offset),
         }
     }
 }
@@ -179,11 +195,11 @@ impl Assembler {
         Assembler { program }
     }
 
-    pub fn run(&self) -> anyhow::Result<Program> {
+    pub fn run(&self) -> anyhow::Result<String> {
         let program = self.program.clone().into();
         let program = self.replace_pseudoregisters(program);
         let program = self.fix_instructions(program);
-        Ok(program)
+        Ok(program.to_string())
     }
 
     pub fn fix_instructions(&self, program: Program) -> Program {
@@ -294,7 +310,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_transpile() {
+    fn test_assembly() {
         let ir = ir::Program {
             function_definition: ir::Function {
                 name: "main".to_string(),
@@ -321,6 +337,7 @@ mod tests {
 
         let assembler = Assembler::new(ir);
         let program = assembler.run().unwrap();
+        println!("{}", program);
         // assert_eq!(
         //     program.function_definition,
         //     Function {
