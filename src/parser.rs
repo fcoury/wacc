@@ -1,31 +1,62 @@
+#![allow(dead_code)]
+use strum::EnumProperty;
+use strum_macros::EnumProperty;
+
 use crate::lexer::Token;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Program {
     pub function_definition: Function,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Function {
     pub name: String,
     pub body: Statement,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Statement {
     Return(Exp),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Exp {
-    Constant(i32),
-    Unary(UnaryOperator, Box<Exp>),
+    Factor(Factor),
+    BinaryOperation(BinaryOperator, Box<Exp>, Box<Exp>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
+pub enum Factor {
+    Constant(i32),
+    Unary(UnaryOperator, Box<Factor>),
+    Exp(Box<Exp>),
+}
+
+#[derive(Debug, PartialEq)]
 pub enum UnaryOperator {
     Complement,
     Negate,
+}
+
+#[derive(Debug, PartialEq, EnumProperty, Clone, Copy)]
+pub enum BinaryOperator {
+    #[strum(props(precedence = "45"))]
+    Add,
+    #[strum(props(precedence = "45"))]
+    Subtract,
+    #[strum(props(precedence = "50"))]
+    Multiply,
+    #[strum(props(precedence = "50"))]
+    Divide,
+    #[strum(props(precedence = "50"))]
+    Remainder,
+}
+
+impl BinaryOperator {
+    pub fn precedence(&self) -> u8 {
+        self.get_str("precedence").unwrap().parse().unwrap()
+    }
 }
 
 pub struct Parser<'a> {
@@ -74,30 +105,81 @@ impl Parser<'_> {
 
     pub fn parse_statement(&mut self) -> anyhow::Result<Statement> {
         self.expect(Token::Return)?;
-        let return_val = self.parse_exp()?;
+        let return_val = self.parse_exp(None)?;
         self.expect(Token::Semicolon)?;
         Ok(Statement::Return(return_val))
     }
 
-    pub fn parse_exp(&mut self) -> anyhow::Result<Exp> {
+    pub fn parse_factor(&mut self) -> anyhow::Result<Factor> {
         let next_token = self.peek();
         if let Token::Int(val) = self.tokens[0] {
             self.tokens = &self.tokens[1..];
-            Ok(Exp::Constant(val))
+            Ok(Factor::Constant(val))
         } else if next_token == Some(Token::Tilde) || next_token == Some(Token::Hyphen) {
             let operator = self.parse_unary_operator()?;
-            let operand = Box::new(self.parse_exp()?);
-            Ok(Exp::Unary(operator, operand))
+            let inner_exp = Box::new(self.parse_factor()?);
+            Ok(Factor::Unary(operator, inner_exp))
         } else if next_token == Some(Token::OpenParen) {
             self.take_token(); // skips OpenParen
-            let exp = self.parse_exp()?;
+            let exp = self.parse_exp(None)?;
             self.expect(Token::CloseParen)?;
-            Ok(exp)
+            Ok(Factor::Exp(Box::new(exp)))
         } else {
             anyhow::bail!(
                 "Expected constant or unary operator, found {:?}",
                 self.tokens[0]
             );
+        }
+    }
+
+    pub fn parse_exp(&mut self, min_prec: Option<u8>) -> anyhow::Result<Exp> {
+        let mut left = Exp::Factor(self.parse_factor()?);
+
+        loop {
+            let Some(next_token) = self.peek() else {
+                break;
+            };
+            if !is_binary_operator(&next_token)
+                || !(precedence(next_token) >= min_prec.unwrap_or(0))
+            {
+                break;
+            }
+
+            let operator = self.parse_binary_operator()?.unwrap();
+            let oper_prec = operator.precedence();
+            let right = self.parse_exp(Some(oper_prec + 1))?;
+            left = Exp::BinaryOperation(operator, Box::new(left), Box::new(right));
+        }
+        Ok(left)
+    }
+
+    pub fn parse_binary_operator(&mut self) -> anyhow::Result<Option<BinaryOperator>> {
+        let Some(next_token) = self.peek() else {
+            anyhow::bail!("Expected binary operator, found end of file");
+        };
+
+        match next_token {
+            Token::Plus => {
+                self.take_token();
+                Ok(Some(BinaryOperator::Add))
+            }
+            Token::Hyphen => {
+                self.take_token();
+                Ok(Some(BinaryOperator::Subtract))
+            }
+            Token::Asterisk => {
+                self.take_token();
+                Ok(Some(BinaryOperator::Multiply))
+            }
+            Token::Slash => {
+                self.take_token();
+                Ok(Some(BinaryOperator::Divide))
+            }
+            Token::Percent => {
+                self.take_token();
+                Ok(Some(BinaryOperator::Remainder))
+            }
+            _ => Ok(None),
         }
     }
 
@@ -134,5 +216,54 @@ impl Parser<'_> {
 
     fn take_token(&mut self) {
         self.tokens = &self.tokens[1..];
+    }
+}
+
+pub fn is_binary_operator(token: &Token) -> bool {
+    matches!(
+        token,
+        Token::Plus | Token::Hyphen | Token::Asterisk | Token::Slash | Token::Percent
+    )
+}
+
+pub fn precedence(token: Token) -> u8 {
+    match token {
+        Token::Plus | Token::Hyphen => 45,
+        Token::Asterisk | Token::Slash | Token::Percent => 50,
+        _ => 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lexer::Lexer;
+
+    #[test]
+    fn test_parse_exp() {
+        let input = "1 * 2 - 3 * (4 + 5)";
+        let tokens = Lexer::new(input).run().unwrap();
+        let mut parser = Parser::new(&tokens);
+        let exp = parser.parse_exp(None).unwrap();
+
+        let expected = Exp::BinaryOperation(
+            BinaryOperator::Subtract,
+            Box::new(Exp::BinaryOperation(
+                BinaryOperator::Multiply,
+                Box::new(Exp::Factor(Factor::Constant(1))),
+                Box::new(Exp::Factor(Factor::Constant(2))),
+            )),
+            Box::new(Exp::BinaryOperation(
+                BinaryOperator::Multiply,
+                Box::new(Exp::Factor(Factor::Constant(3))),
+                Box::new(Exp::Factor(Factor::Exp(Box::new(Exp::BinaryOperation(
+                    BinaryOperator::Add,
+                    Box::new(Exp::Factor(Factor::Constant(4))),
+                    Box::new(Exp::Factor(Factor::Constant(5))),
+                ))))),
+            )),
+        );
+
+        assert_eq!(exp, expected);
     }
 }
