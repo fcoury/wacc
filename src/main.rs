@@ -1,4 +1,5 @@
 mod assembler;
+mod ir;
 mod lexer;
 mod parser;
 
@@ -25,6 +26,10 @@ struct Args {
     #[clap(long)]
     codegen: bool,
 
+    // run lexer, parser, assembly and code generation, stop before TACKY ir
+    #[clap(long)]
+    tacky: bool,
+
     /// the file to parse
     input: PathBuf,
 }
@@ -39,7 +44,7 @@ fn main() -> anyhow::Result<()> {
         exit(1);
     }
 
-    compile(&preprocessed_file, args.lex, args.parse, args.codegen)?;
+    compile(&preprocessed_file, &args)?;
 
     Ok(())
 }
@@ -56,7 +61,7 @@ fn preprocess(input: &Path, output: &Path) -> anyhow::Result<ExitStatus> {
         .context("Failed to preprocess file")
 }
 
-fn compile(input_file: &Path, lex: bool, parse: bool, codegen: bool) -> anyhow::Result<()> {
+fn compile(input_file: &Path, args: &Args) -> anyhow::Result<()> {
     let input = std::fs::read_to_string(input_file).unwrap_or_else(|err| {
         eprintln!("Error reading file: {}", err);
         exit(1);
@@ -67,7 +72,7 @@ fn compile(input_file: &Path, lex: bool, parse: bool, codegen: bool) -> anyhow::
     std::fs::remove_file(input_file).context("Failed to delete input file")?;
     println!("Tokens: {:#?}", tokens);
 
-    if lex {
+    if args.lex {
         return Ok(());
     }
 
@@ -75,24 +80,31 @@ fn compile(input_file: &Path, lex: bool, parse: bool, codegen: bool) -> anyhow::
     let ast = parser.run().context("Failed to parse file")?;
     println!("AST: {:#?}", ast);
 
-    if parse {
+    if args.parse {
         return Ok(());
     }
 
-    let assembler = Assembler::new(ast);
-    let assembly = assembler.run().context("Failed to assemble file")?;
-    println!("Assembly: {:#?}", assembly);
+    let tacky = ir::Ir::new(ast).run();
+    println!("Tacky: {:#?}", tacky);
 
-    if codegen {
+    if args.tacky {
         return Ok(());
     }
 
-    let code = assembly.to_string();
-    println!("Code:\n{}", code);
+    // let assembler = Assembler::new(ast);
+    // let assembly = assembler.run().context("Failed to assemble file")?;
+    // println!("Assembly: {:#?}", assembly);
+    //
+    // let code = assembly.to_string();
+    // println!("Code:\n{}", code);
 
-    let assembly_file = input_file.with_extension("s");
-    std::fs::write(&assembly_file, code).context("Failed to write assembly file")?;
-    build(&assembly_file)?;
+    if args.codegen {
+        return Ok(());
+    }
+
+    // let assembly_file = input_file.with_extension("s");
+    // std::fs::write(&assembly_file, code).context("Failed to write assembly file")?;
+    // build(&assembly_file)?;
 
     Ok(())
 }
