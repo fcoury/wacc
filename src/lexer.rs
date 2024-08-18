@@ -14,6 +14,10 @@ pub enum Token {
     TwoHyphens,
     Tilde,
     Hyphen,
+    Plus,
+    Asterisk,
+    Slash,
+    Percent,
 
     // then single character tokens
     OpenParen,
@@ -41,6 +45,10 @@ impl Token {
             Token::TwoHyphens => Some(Regex::new(r"^\-\-").unwrap()),
             Token::Tilde => Some(Regex::new(r"^\~").unwrap()),
             Token::Hyphen => Some(Regex::new(r"^\-").unwrap()),
+            Token::Plus => Some(Regex::new(r"^\+").unwrap()),
+            Token::Asterisk => Some(Regex::new(r"^\*").unwrap()),
+            Token::Slash => Some(Regex::new(r"^/").unwrap()),
+            Token::Percent => Some(Regex::new(r"^%").unwrap()),
             Token::OpenParen => Some(Regex::new(r"^\(").unwrap()),
             Token::CloseParen => Some(Regex::new(r"^\)").unwrap()),
             Token::OpenBrace => Some(Regex::new(r"^\{").unwrap()),
