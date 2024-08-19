@@ -277,22 +277,19 @@ impl Assembler {
                     }
                     (src, dst) => vec![Instruction::Mov(src, dst)],
                 },
-                Instruction::Idiv(operand) => match operand {
-                    Operand::Stack(offset) => vec![
-                        Instruction::Mov(Operand::Stack(offset), Operand::Reg(Reg::R10)),
-                        Instruction::Idiv(Operand::Reg(Reg::R10)),
-                    ],
-                    operand => vec![Instruction::Idiv(operand)],
-                },
+                Instruction::Idiv(operand) => vec![
+                    Instruction::Mov(operand, Operand::Reg(Reg::R10)),
+                    Instruction::Idiv(Operand::Reg(Reg::R10)),
+                ],
                 Instruction::Binary(op, src1, src2) => match (&op, src1, src2) {
                     (BinaryOperator::Add, Operand::Stack(src1), Operand::Stack(src2))
                     | (BinaryOperator::Sub, Operand::Stack(src1), Operand::Stack(src2)) => vec![
                         Instruction::Mov(Operand::Stack(src1), Operand::Reg(Reg::R10)),
                         Instruction::Binary(op, Operand::Reg(Reg::R10), Operand::Stack(src2)),
                     ],
-                    (BinaryOperator::Mul, Operand::Stack(src1), Operand::Stack(src2)) => vec![
+                    (BinaryOperator::Mul, src1, Operand::Stack(src2)) => vec![
                         Instruction::Mov(Operand::Stack(src2), Operand::Reg(Reg::R11)),
-                        Instruction::Binary(op, Operand::Stack(src1), Operand::Reg(Reg::R11)),
+                        Instruction::Binary(op, src1, Operand::Reg(Reg::R11)),
                         Instruction::Mov(Operand::Reg(Reg::R11), Operand::Stack(src2)),
                     ],
                     (op, src1, src2) => vec![Instruction::Binary(*op, src1, src2)],
