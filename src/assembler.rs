@@ -88,14 +88,18 @@ impl Display for Ret {
 #[derive(Debug, PartialEq)]
 pub enum Reg {
     AX,
+    DX,
     R10,
+    R11,
 }
 
 impl Display for Reg {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
             Reg::AX => write!(f, "%eax"),
+            Reg::DX => write!(f, "%edx"),
             Reg::R10 => write!(f, "%r10d"),
+            Reg::R11 => write!(f, "%r11d"),
         }
     }
 }
@@ -104,6 +108,9 @@ impl Display for Reg {
 pub enum Instruction {
     Mov(Operand, Operand),
     Unary(UnaryOperator, Operand),
+    Binary(BinaryOperator, Operand, Operand),
+    Idiv(Operand),
+    Cdq,
     AllocateStack(i32),
     Ret(Ret),
 }
@@ -119,7 +126,26 @@ impl From<ir::Instruction> for Vec<Instruction> {
                 Instruction::Mov(val.into(), Operand::Reg(Reg::AX)),
                 Instruction::Ret(Ret),
             ],
-            ir::Instruction::Binary(op, src1, src2, dst) => todo!(),
+            ir::Instruction::Binary(op, src1, src2, dst) => match op {
+                ir::BinaryOperator::Add
+                | ir::BinaryOperator::Subtract
+                | ir::BinaryOperator::Multiply => vec![
+                    Instruction::Mov(src1.into(), dst.clone().into()),
+                    Instruction::Binary(op.into(), src2.into(), dst.into()),
+                ],
+                ir::BinaryOperator::Divide => vec![
+                    Instruction::Mov(src1.into(), Operand::Reg(Reg::AX)),
+                    Instruction::Cdq,
+                    Instruction::Idiv(src2.into()),
+                    Instruction::Mov(Operand::Reg(Reg::AX), dst.into()),
+                ],
+                ir::BinaryOperator::Remainder => vec![
+                    Instruction::Mov(src1.into(), Operand::Reg(Reg::AX)),
+                    Instruction::Cdq,
+                    Instruction::Idiv(src2.into()),
+                    Instruction::Mov(Operand::Reg(Reg::DX), dst.into()),
+                ],
+            },
         }
     }
 }
@@ -131,6 +157,11 @@ impl Display for Instruction {
             Instruction::Unary(operator, operand) => write!(f, "{}\t{}", operator, operand),
             Instruction::AllocateStack(size) => write!(f, "subq\t${}, %rsp", size),
             Instruction::Ret(ret) => write!(f, "{}", ret),
+            Instruction::Binary(operator, src1, src2) => {
+                write!(f, "{}\t{}, {}", operator, src1, src2)
+            }
+            Instruction::Idiv(operand) => write!(f, "idivl\t{}", operand),
+            Instruction::Cdq => write!(f, "cdq"),
         }
     }
 }
@@ -155,6 +186,34 @@ impl Display for UnaryOperator {
         match self {
             UnaryOperator::Neg => write!(f, "negl"),
             UnaryOperator::Not => write!(f, "notl"),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum BinaryOperator {
+    Add,
+    Sub,
+    Mul,
+}
+
+impl From<ir::BinaryOperator> for BinaryOperator {
+    fn from(operator: ir::BinaryOperator) -> Self {
+        match operator {
+            ir::BinaryOperator::Add => BinaryOperator::Add,
+            ir::BinaryOperator::Subtract => BinaryOperator::Sub,
+            ir::BinaryOperator::Multiply => BinaryOperator::Mul,
+            _ => todo!(),
+        }
+    }
+}
+
+impl Display for BinaryOperator {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self {
+            BinaryOperator::Add => write!(f, "addl"),
+            BinaryOperator::Sub => write!(f, "subl"),
+            BinaryOperator::Mul => write!(f, "imull"),
         }
     }
 }
@@ -199,11 +258,11 @@ impl Assembler {
     pub fn run(&self) -> anyhow::Result<String> {
         let program = self.program.clone().into();
         let program = self.replace_pseudoregisters(program);
-        let program = self.fix_instructions(program);
+        let program = self.fixup_instructions(program);
         Ok(program.to_string())
     }
 
-    pub fn fix_instructions(&self, program: Program) -> Program {
+    pub fn fixup_instructions(&self, program: Program) -> Program {
         let instructions = program
             .function_definition
             .instructions
@@ -217,6 +276,26 @@ impl Assembler {
                         ]
                     }
                     (src, dst) => vec![Instruction::Mov(src, dst)],
+                },
+                Instruction::Idiv(operand) => match operand {
+                    Operand::Stack(offset) => vec![
+                        Instruction::Mov(Operand::Stack(offset), Operand::Reg(Reg::R10)),
+                        Instruction::Idiv(Operand::Reg(Reg::R10)),
+                    ],
+                    operand => vec![Instruction::Idiv(operand)],
+                },
+                Instruction::Binary(op, src1, src2) => match (&op, src1, src2) {
+                    (BinaryOperator::Add, Operand::Stack(src1), Operand::Stack(src2))
+                    | (BinaryOperator::Sub, Operand::Stack(src1), Operand::Stack(src2)) => vec![
+                        Instruction::Mov(Operand::Stack(src1), Operand::Reg(Reg::R10)),
+                        Instruction::Binary(op, Operand::Reg(Reg::R10), Operand::Stack(src2)),
+                    ],
+                    (BinaryOperator::Mul, Operand::Stack(src1), Operand::Stack(src2)) => vec![
+                        Instruction::Mov(Operand::Stack(src2), Operand::Reg(Reg::R11)),
+                        Instruction::Binary(op, Operand::Stack(src1), Operand::Reg(Reg::R11)),
+                        Instruction::Mov(Operand::Reg(Reg::R11), Operand::Stack(src2)),
+                    ],
+                    (op, src1, src2) => vec![Instruction::Binary(*op, src1, src2)],
                 },
                 instr => vec![instr],
             })
@@ -288,6 +367,52 @@ impl Assembler {
                 Instruction::AllocateStack(size) => {
                     stack_offset -= size;
                     Instruction::AllocateStack(size)
+                }
+                Instruction::Idiv(operand) => {
+                    let operand = match operand {
+                        Operand::Pseudo(pseudo) => {
+                            if let Some(offset) = stack_map.get(&pseudo) {
+                                Operand::Stack(*offset)
+                            } else {
+                                stack_offset -= 4;
+                                stack_map.insert(pseudo.clone(), stack_offset);
+                                Operand::Stack(stack_offset)
+                            }
+                        }
+                        _ => operand,
+                    };
+
+                    Instruction::Idiv(operand)
+                }
+                Instruction::Cdq => Instruction::Cdq,
+                Instruction::Binary(op, src1, src2) => {
+                    let src1 = match src1 {
+                        Operand::Pseudo(pseudo) => {
+                            if let Some(offset) = stack_map.get(&pseudo) {
+                                Operand::Stack(*offset)
+                            } else {
+                                stack_offset -= 4;
+                                stack_map.insert(pseudo.clone(), stack_offset);
+                                Operand::Stack(stack_offset)
+                            }
+                        }
+                        _ => src1,
+                    };
+
+                    let src2 = match src2 {
+                        Operand::Pseudo(pseudo) => {
+                            if let Some(offset) = stack_map.get(&pseudo) {
+                                Operand::Stack(*offset)
+                            } else {
+                                stack_offset -= 4;
+                                stack_map.insert(pseudo.clone(), stack_offset);
+                                Operand::Stack(stack_offset)
+                            }
+                        }
+                        _ => src2,
+                    };
+
+                    Instruction::Binary(op, src1, src2)
                 }
                 Instruction::Ret(ret) => Instruction::Ret(ret),
             })
@@ -404,5 +529,102 @@ mod tests {
                 ]
             }
         );
+    }
+
+    fn ir_prog(instrs: Vec<ir::Instruction>) -> ir::Program {
+        ir::Program {
+            function_definition: ir::Function {
+                name: "main".to_string(),
+                instructions: instrs,
+            },
+        }
+    }
+
+    #[test]
+    fn test_pseudo_mul_vars() {
+        let prog = ir_prog(vec![ir::Instruction::Binary(
+            ir::BinaryOperator::Multiply,
+            ir::Val::Var("tmp.0".to_string()),
+            ir::Val::Var("tmp.1".to_string()),
+            ir::Val::Var("tmp.2".to_string()),
+        )
+        .into()]);
+
+        let asm = Assembler::new(prog.clone());
+        let prog = asm.replace_pseudoregisters(prog.into());
+
+        let expected = vec![
+            Instruction::AllocateStack(12),
+            Instruction::Mov(Operand::Stack(-4), Operand::Stack(-12)),
+            Instruction::Binary(BinaryOperator::Mul, Operand::Stack(-8), Operand::Stack(-12)),
+        ];
+
+        assert_eq!(prog.function_definition.instructions, expected);
+    }
+
+    #[test]
+    fn test_pseudo_mul_const_var() {
+        let prog = ir_prog(vec![ir::Instruction::Binary(
+            ir::BinaryOperator::Multiply,
+            ir::Val::Constant(3),
+            ir::Val::Var("tmp.1".to_string()),
+            ir::Val::Var("tmp.2".to_string()),
+        )
+        .into()]);
+
+        let asm = Assembler::new(prog.clone());
+        let prog = asm.replace_pseudoregisters(prog.into());
+
+        let expected = vec![
+            Instruction::AllocateStack(8),
+            Instruction::Mov(Operand::Imm(3), Operand::Stack(-4)),
+            Instruction::Binary(BinaryOperator::Mul, Operand::Stack(-8), Operand::Stack(-4)),
+        ];
+
+        assert_eq!(prog.function_definition.instructions, expected);
+
+        let prog = ir_prog(vec![ir::Instruction::Binary(
+            ir::BinaryOperator::Multiply,
+            ir::Val::Var("tmp.1".to_string()),
+            ir::Val::Constant(3),
+            ir::Val::Var("tmp.2".to_string()),
+        )
+        .into()]);
+
+        let asm = Assembler::new(prog.clone());
+        let prog = asm.replace_pseudoregisters(prog.into());
+
+        let expected = vec![
+            Instruction::AllocateStack(8),
+            Instruction::Mov(Operand::Stack(-4), Operand::Stack(-8)),
+            Instruction::Binary(BinaryOperator::Mul, Operand::Imm(3), Operand::Stack(-8)),
+        ];
+
+        assert_eq!(prog.function_definition.instructions, expected);
+    }
+
+    #[test]
+    fn test_imull_gen() {
+        let prog = ir_prog(vec![ir::Instruction::Binary(
+            ir::BinaryOperator::Multiply,
+            ir::Val::Constant(3),
+            ir::Val::Var("tmp.0".to_string()),
+            ir::Val::Var("tmp.1".to_string()),
+        )]);
+
+        let assembler = Assembler::new(prog.clone());
+        let program = assembler.run().unwrap();
+        println!("{:#?}", program);
+        println!("{}", program);
+        // assert_eq!(
+        //     program.function_definition,
+        //     Function {
+        //         name: "main".to_string(),
+        //         instructions: vec![
+        //             Instruction::Mov(Operand::Imm(42), Operand::Pseudo("tmp.0".to_string())),
+        //             Instruction::Unary(UnaryOperator::Neg, Operand::Pseudo("tmp.0".to_string())),
+        //         ]
+        //     }
+        // );
     }
 }
