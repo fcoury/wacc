@@ -139,13 +139,13 @@ impl Parser<'_> {
             let Some(next_token) = self.peek() else {
                 break;
             };
-            if !is_binary_operator(&next_token)
-                || !(precedence(next_token) >= min_prec.unwrap_or(0))
-            {
+            if !(precedence(next_token) >= min_prec.unwrap_or(0)) {
                 break;
             }
+            let Some(operator) = self.parse_binary_operator()? else {
+                break;
+            };
 
-            let operator = self.parse_binary_operator()?.unwrap();
             let oper_prec = operator.precedence();
             let right = self.parse_exp(Some(oper_prec + 1))?;
             left = Exp::BinaryOperation(operator, Box::new(left), Box::new(right));
@@ -217,13 +217,6 @@ impl Parser<'_> {
     fn take_token(&mut self) {
         self.tokens = &self.tokens[1..];
     }
-}
-
-pub fn is_binary_operator(token: &Token) -> bool {
-    matches!(
-        token,
-        Token::Plus | Token::Hyphen | Token::Asterisk | Token::Slash | Token::Percent
-    )
 }
 
 pub fn precedence(token: Token) -> u8 {
