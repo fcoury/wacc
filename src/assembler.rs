@@ -119,6 +119,7 @@ impl From<ir::Instruction> for Vec<Instruction> {
                 Instruction::Mov(val.into(), Operand::Reg(Reg::AX)),
                 Instruction::Ret(Ret),
             ],
+            ir::Instruction::Binary(op, src1, src2, dst) => todo!(),
         }
     }
 }
