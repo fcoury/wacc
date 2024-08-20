@@ -93,6 +93,7 @@ pub fn emit_ir(
 pub enum UnaryOperator {
     Negate,
     Complement,
+    Not,
 }
 
 impl From<parser::UnaryOperator> for UnaryOperator {
@@ -100,6 +101,7 @@ impl From<parser::UnaryOperator> for UnaryOperator {
         match operator {
             parser::UnaryOperator::Negate => UnaryOperator::Negate,
             parser::UnaryOperator::Complement => UnaryOperator::Complement,
+            parser::UnaryOperator::Not => UnaryOperator::Not,
         }
     }
 }
@@ -111,11 +113,19 @@ pub enum BinaryOperator {
     Multiply,
     Divide,
     Remainder,
-    And,
-    Or,
-    Xor,
+    BitwiseAnd,
+    BitwiseOr,
+    BitwiseXor,
     ShiftLeft,
     ShiftRight,
+    And,
+    Or,
+    Equal,
+    NotEqual,
+    LessThan,
+    LessOrEqual,
+    GraterThan,
+    GreaterOrEqual,
 }
 
 impl From<parser::BinaryOperator> for BinaryOperator {
@@ -126,11 +136,19 @@ impl From<parser::BinaryOperator> for BinaryOperator {
             parser::BinaryOperator::Multiply => BinaryOperator::Multiply,
             parser::BinaryOperator::Divide => BinaryOperator::Divide,
             parser::BinaryOperator::Remainder => BinaryOperator::Remainder,
-            parser::BinaryOperator::And => BinaryOperator::And,
-            parser::BinaryOperator::Or => BinaryOperator::Or,
-            parser::BinaryOperator::Xor => BinaryOperator::Xor,
+            parser::BinaryOperator::BitwiseAnd => BinaryOperator::BitwiseAnd,
+            parser::BinaryOperator::BitwiseOr => BinaryOperator::BitwiseOr,
+            parser::BinaryOperator::BitwiseXor => BinaryOperator::BitwiseXor,
             parser::BinaryOperator::ShiftLeft => BinaryOperator::ShiftLeft,
             parser::BinaryOperator::ShiftRight => BinaryOperator::ShiftRight,
+            parser::BinaryOperator::And => BinaryOperator::And,
+            parser::BinaryOperator::Or => BinaryOperator::Or,
+            parser::BinaryOperator::Equal => BinaryOperator::Equal,
+            parser::BinaryOperator::NotEqual => BinaryOperator::NotEqual,
+            parser::BinaryOperator::LessThan => BinaryOperator::LessThan,
+            parser::BinaryOperator::LessOrEqual => BinaryOperator::LessOrEqual,
+            parser::BinaryOperator::GraterThan => BinaryOperator::GraterThan,
+            parser::BinaryOperator::GreaterOrEqual => BinaryOperator::GreaterOrEqual,
         }
     }
 }

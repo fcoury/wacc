@@ -37,6 +37,7 @@ pub enum Factor {
 pub enum UnaryOperator {
     Complement,
     Negate,
+    Not,
 }
 
 #[derive(Debug, PartialEq, EnumProperty, Clone, Copy)]
@@ -55,11 +56,27 @@ pub enum BinaryOperator {
     ShiftLeft,
     #[strum(props(precedence = "40"))]
     ShiftRight,
+    #[strum(props(precedence = "35"))]
+    LessThan,
+    #[strum(props(precedence = "35"))]
+    LessOrEqual,
+    #[strum(props(precedence = "35"))]
+    GraterThan,
+    #[strum(props(precedence = "35"))]
+    GreaterOrEqual,
     #[strum(props(precedence = "30"))]
-    And,
+    Equal,
+    #[strum(props(precedence = "30"))]
+    NotEqual,
+    #[strum(props(precedence = "30"))]
+    BitwiseAnd,
     #[strum(props(precedence = "25"))]
-    Xor,
+    BitwiseXor,
     #[strum(props(precedence = "20"))]
+    BitwiseOr,
+    #[strum(props(precedence = "10"))]
+    And,
+    #[strum(props(precedence = "5"))]
     Or,
 }
 
@@ -125,7 +142,10 @@ impl Parser<'_> {
         if let Token::Int(val) = self.tokens[0] {
             self.tokens = &self.tokens[1..];
             Ok(Factor::Constant(val))
-        } else if next_token == Some(Token::Tilde) || next_token == Some(Token::Hyphen) {
+        } else if next_token == Some(Token::Tilde)
+            || next_token == Some(Token::Hyphen)
+            || next_token == Some(Token::Exclamation)
+        {
             let operator = self.parse_unary_operator()?;
             let inner_exp = Box::new(self.parse_factor()?);
             Ok(Factor::Unary(operator, inner_exp))
@@ -191,15 +211,15 @@ impl Parser<'_> {
             }
             Token::Ampersand => {
                 self.take_token();
-                Ok(Some(BinaryOperator::And))
+                Ok(Some(BinaryOperator::BitwiseAnd))
             }
             Token::Pipe => {
                 self.take_token();
-                Ok(Some(BinaryOperator::Or))
+                Ok(Some(BinaryOperator::BitwiseOr))
             }
             Token::Caret => {
                 self.take_token();
-                Ok(Some(BinaryOperator::Xor))
+                Ok(Some(BinaryOperator::BitwiseXor))
             }
             Token::LessLess => {
                 self.take_token();
@@ -208,6 +228,38 @@ impl Parser<'_> {
             Token::GreaterGreater => {
                 self.take_token();
                 Ok(Some(BinaryOperator::ShiftRight))
+            }
+            Token::AmpersandAmpersand => {
+                self.take_token();
+                Ok(Some(BinaryOperator::And))
+            }
+            Token::PipePipe => {
+                self.take_token();
+                Ok(Some(BinaryOperator::Or))
+            }
+            Token::EqualsEquals => {
+                self.take_token();
+                Ok(Some(BinaryOperator::Equal))
+            }
+            Token::ExclamationEquals => {
+                self.take_token();
+                Ok(Some(BinaryOperator::NotEqual))
+            }
+            Token::Less => {
+                self.take_token();
+                Ok(Some(BinaryOperator::LessThan))
+            }
+            Token::LessEquals => {
+                self.take_token();
+                Ok(Some(BinaryOperator::LessOrEqual))
+            }
+            Token::Greater => {
+                self.take_token();
+                Ok(Some(BinaryOperator::GraterThan))
+            }
+            Token::GreaterEquals => {
+                self.take_token();
+                Ok(Some(BinaryOperator::GreaterOrEqual))
             }
             _ => Ok(None),
         }
@@ -222,6 +274,10 @@ impl Parser<'_> {
             Token::Hyphen => {
                 self.tokens = &self.tokens[1..];
                 Ok(UnaryOperator::Negate)
+            }
+            Token::Exclamation => {
+                self.tokens = &self.tokens[1..];
+                Ok(UnaryOperator::Not)
             }
             _ => anyhow::bail!("Expected unary operator, found {:?}", self.tokens[0]),
         }

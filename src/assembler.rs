@@ -134,9 +134,9 @@ impl From<ir::Instruction> for Vec<Instruction> {
                 ir::BinaryOperator::Add
                 | ir::BinaryOperator::Subtract
                 | ir::BinaryOperator::Multiply
-                | ir::BinaryOperator::And
-                | ir::BinaryOperator::Or
-                | ir::BinaryOperator::Xor => vec![
+                | ir::BinaryOperator::BitwiseAnd
+                | ir::BinaryOperator::BitwiseOr
+                | ir::BinaryOperator::BitwiseXor => vec![
                     Instruction::Mov(src1.into(), dst.clone().into()),
                     Instruction::Binary(op.into(), src2.into(), dst.into()),
                 ],
@@ -190,6 +190,7 @@ impl From<ir::UnaryOperator> for UnaryOperator {
         match operator {
             ir::UnaryOperator::Negate => UnaryOperator::Neg,
             ir::UnaryOperator::Complement => UnaryOperator::Not,
+            ir::UnaryOperator::Not => todo!(),
         }
     }
 }
@@ -221,12 +222,12 @@ impl From<ir::BinaryOperator> for BinaryOperator {
             ir::BinaryOperator::Add => BinaryOperator::Add,
             ir::BinaryOperator::Subtract => BinaryOperator::Sub,
             ir::BinaryOperator::Multiply => BinaryOperator::Mul,
-            ir::BinaryOperator::And => BinaryOperator::And,
-            ir::BinaryOperator::Or => BinaryOperator::Or,
-            ir::BinaryOperator::Xor => BinaryOperator::Xor,
+            ir::BinaryOperator::BitwiseAnd => BinaryOperator::And,
+            ir::BinaryOperator::BitwiseOr => BinaryOperator::Or,
+            ir::BinaryOperator::BitwiseXor => BinaryOperator::Xor,
             ir::BinaryOperator::ShiftLeft => BinaryOperator::ShiftLeft,
             ir::BinaryOperator::ShiftRight => BinaryOperator::ShiftRight,
-            ir::BinaryOperator::And => BinaryOperator::And,
+            ir::BinaryOperator::BitwiseAnd => BinaryOperator::And,
             _ => todo!(),
         }
     }
@@ -576,7 +577,7 @@ mod tests {
     #[test]
     fn test_pseudo_and_vars() {
         let prog = ir_prog(vec![ir::Instruction::Binary(
-            ir::BinaryOperator::And,
+            ir::BinaryOperator::BitwiseAnd,
             ir::Val::Var("tmp.0".to_string()),
             ir::Val::Var("tmp.1".to_string()),
             ir::Val::Var("tmp.2".to_string()),
@@ -598,7 +599,7 @@ mod tests {
     #[test]
     fn test_fixup_and() {
         let prog = ir_prog(vec![ir::Instruction::Binary(
-            ir::BinaryOperator::And,
+            ir::BinaryOperator::BitwiseAnd,
             ir::Val::Var("tmp.0".to_string()),
             ir::Val::Var("tmp.1".to_string()),
             ir::Val::Var("tmp.2".to_string()),
@@ -707,7 +708,7 @@ mod tests {
     #[test]
     fn test_andl_gen() {
         let prog = ir_prog(vec![ir::Instruction::Binary(
-            ir::BinaryOperator::And,
+            ir::BinaryOperator::BitwiseAnd,
             ir::Val::Constant(3),
             ir::Val::Var("tmp.0".to_string()),
             ir::Val::Var("tmp.1".to_string()),
@@ -722,7 +723,7 @@ mod tests {
     #[test]
     fn test_orl_gen() {
         let prog = ir_prog(vec![ir::Instruction::Binary(
-            ir::BinaryOperator::Or,
+            ir::BinaryOperator::BitwiseOr,
             ir::Val::Constant(3),
             ir::Val::Var("tmp.0".to_string()),
             ir::Val::Var("tmp.1".to_string()),
@@ -737,7 +738,7 @@ mod tests {
     #[test]
     fn test_xorl_gen() {
         let prog = ir_prog(vec![ir::Instruction::Binary(
-            ir::BinaryOperator::Xor,
+            ir::BinaryOperator::BitwiseXor,
             ir::Val::Constant(3),
             ir::Val::Var("tmp.0".to_string()),
             ir::Val::Var("tmp.1".to_string()),
