@@ -12,12 +12,17 @@ pub enum Token {
 
     // then operators
     TwoHyphens,
+    LessLess,
+    GreaterGreater,
     Tilde,
     Hyphen,
     Plus,
     Asterisk,
     Slash,
     Percent,
+    Ampersand,
+    Pipe,
+    Caret,
 
     // then single character tokens
     OpenParen,
@@ -43,6 +48,8 @@ impl Token {
             Token::Void => Some(Regex::new(r"^void\b").unwrap()),
             Token::Return => Some(Regex::new(r"^return\b").unwrap()),
             Token::TwoHyphens => Some(Regex::new(r"^\-\-").unwrap()),
+            Token::LessLess => Some(Regex::new(r"^<<").unwrap()),
+            Token::GreaterGreater => Some(Regex::new(r"^>>").unwrap()),
             Token::Tilde => Some(Regex::new(r"^\~").unwrap()),
             Token::Hyphen => Some(Regex::new(r"^\-").unwrap()),
             Token::Plus => Some(Regex::new(r"^\+").unwrap()),
@@ -54,6 +61,9 @@ impl Token {
             Token::OpenBrace => Some(Regex::new(r"^\{").unwrap()),
             Token::CloseBrace => Some(Regex::new(r"^\}").unwrap()),
             Token::Semicolon => Some(Regex::new(r"^;").unwrap()),
+            Token::Ampersand => Some(Regex::new(r"^&").unwrap()),
+            Token::Pipe => Some(Regex::new(r"^\|").unwrap()),
+            Token::Caret => Some(Regex::new(r"^\^").unwrap()),
             _ => None,
         }
     }

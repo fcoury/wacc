@@ -111,6 +111,11 @@ pub enum BinaryOperator {
     Multiply,
     Divide,
     Remainder,
+    And,
+    Or,
+    Xor,
+    ShiftLeft,
+    ShiftRight,
 }
 
 impl From<parser::BinaryOperator> for BinaryOperator {
@@ -121,6 +126,11 @@ impl From<parser::BinaryOperator> for BinaryOperator {
             parser::BinaryOperator::Multiply => BinaryOperator::Multiply,
             parser::BinaryOperator::Divide => BinaryOperator::Divide,
             parser::BinaryOperator::Remainder => BinaryOperator::Remainder,
+            parser::BinaryOperator::And => BinaryOperator::And,
+            parser::BinaryOperator::Or => BinaryOperator::Or,
+            parser::BinaryOperator::Xor => BinaryOperator::Xor,
+            parser::BinaryOperator::ShiftLeft => BinaryOperator::ShiftLeft,
+            parser::BinaryOperator::ShiftRight => BinaryOperator::ShiftRight,
         }
     }
 }

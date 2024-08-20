@@ -41,16 +41,26 @@ pub enum UnaryOperator {
 
 #[derive(Debug, PartialEq, EnumProperty, Clone, Copy)]
 pub enum BinaryOperator {
-    #[strum(props(precedence = "45"))]
-    Add,
-    #[strum(props(precedence = "45"))]
-    Subtract,
     #[strum(props(precedence = "50"))]
     Multiply,
     #[strum(props(precedence = "50"))]
     Divide,
     #[strum(props(precedence = "50"))]
     Remainder,
+    #[strum(props(precedence = "45"))]
+    Add,
+    #[strum(props(precedence = "45"))]
+    Subtract,
+    #[strum(props(precedence = "40"))]
+    ShiftLeft,
+    #[strum(props(precedence = "40"))]
+    ShiftRight,
+    #[strum(props(precedence = "30"))]
+    And,
+    #[strum(props(precedence = "25"))]
+    Xor,
+    #[strum(props(precedence = "20"))]
+    Or,
 }
 
 impl BinaryOperator {
@@ -178,6 +188,26 @@ impl Parser<'_> {
             Token::Percent => {
                 self.take_token();
                 Ok(Some(BinaryOperator::Remainder))
+            }
+            Token::Ampersand => {
+                self.take_token();
+                Ok(Some(BinaryOperator::And))
+            }
+            Token::Pipe => {
+                self.take_token();
+                Ok(Some(BinaryOperator::Or))
+            }
+            Token::Caret => {
+                self.take_token();
+                Ok(Some(BinaryOperator::Xor))
+            }
+            Token::LessLess => {
+                self.take_token();
+                Ok(Some(BinaryOperator::ShiftLeft))
+            }
+            Token::GreaterGreater => {
+                self.take_token();
+                Ok(Some(BinaryOperator::ShiftRight))
             }
             _ => Ok(None),
         }

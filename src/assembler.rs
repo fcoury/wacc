@@ -88,6 +88,8 @@ impl Display for Ret {
 #[derive(Debug, PartialEq)]
 pub enum Reg {
     AX,
+    CX,
+    CL,
     DX,
     R10,
     R11,
@@ -97,6 +99,8 @@ impl Display for Reg {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
             Reg::AX => write!(f, "%eax"),
+            Reg::CX => write!(f, "%ecx"),
+            Reg::CL => write!(f, "%cl"),
             Reg::DX => write!(f, "%edx"),
             Reg::R10 => write!(f, "%r10d"),
             Reg::R11 => write!(f, "%r11d"),
@@ -129,9 +133,17 @@ impl From<ir::Instruction> for Vec<Instruction> {
             ir::Instruction::Binary(op, src1, src2, dst) => match op {
                 ir::BinaryOperator::Add
                 | ir::BinaryOperator::Subtract
-                | ir::BinaryOperator::Multiply => vec![
+                | ir::BinaryOperator::Multiply
+                | ir::BinaryOperator::And
+                | ir::BinaryOperator::Or
+                | ir::BinaryOperator::Xor => vec![
                     Instruction::Mov(src1.into(), dst.clone().into()),
                     Instruction::Binary(op.into(), src2.into(), dst.into()),
+                ],
+                ir::BinaryOperator::ShiftLeft | ir::BinaryOperator::ShiftRight => vec![
+                    Instruction::Mov(src1.into(), dst.clone().into()),
+                    Instruction::Mov(src2.into(), Operand::Reg(Reg::CX)),
+                    Instruction::Binary(op.into(), Operand::Reg(Reg::CL), dst.into()),
                 ],
                 ir::BinaryOperator::Divide => vec![
                     Instruction::Mov(src1.into(), Operand::Reg(Reg::AX)),
@@ -145,6 +157,7 @@ impl From<ir::Instruction> for Vec<Instruction> {
                     Instruction::Idiv(src2.into()),
                     Instruction::Mov(Operand::Reg(Reg::DX), dst.into()),
                 ],
+                _ => todo!(),
             },
         }
     }
@@ -195,6 +208,11 @@ pub enum BinaryOperator {
     Add,
     Sub,
     Mul,
+    And,
+    Or,
+    Xor,
+    ShiftLeft,
+    ShiftRight,
 }
 
 impl From<ir::BinaryOperator> for BinaryOperator {
@@ -203,6 +221,12 @@ impl From<ir::BinaryOperator> for BinaryOperator {
             ir::BinaryOperator::Add => BinaryOperator::Add,
             ir::BinaryOperator::Subtract => BinaryOperator::Sub,
             ir::BinaryOperator::Multiply => BinaryOperator::Mul,
+            ir::BinaryOperator::And => BinaryOperator::And,
+            ir::BinaryOperator::Or => BinaryOperator::Or,
+            ir::BinaryOperator::Xor => BinaryOperator::Xor,
+            ir::BinaryOperator::ShiftLeft => BinaryOperator::ShiftLeft,
+            ir::BinaryOperator::ShiftRight => BinaryOperator::ShiftRight,
+            ir::BinaryOperator::And => BinaryOperator::And,
             _ => todo!(),
         }
     }
@@ -214,6 +238,11 @@ impl Display for BinaryOperator {
             BinaryOperator::Add => write!(f, "addl"),
             BinaryOperator::Sub => write!(f, "subl"),
             BinaryOperator::Mul => write!(f, "imull"),
+            BinaryOperator::And => write!(f, "andl"),
+            BinaryOperator::Or => write!(f, "orl"),
+            BinaryOperator::Xor => write!(f, "xorl"),
+            BinaryOperator::ShiftLeft => write!(f, "sall"),
+            BinaryOperator::ShiftRight => write!(f, "sarl"),
         }
     }
 }
@@ -283,11 +312,18 @@ impl Assembler {
                 ],
                 Instruction::Binary(op, src1, src2) => match (&op, src1, src2) {
                     (BinaryOperator::Add, Operand::Stack(src1), Operand::Stack(src2))
-                    | (BinaryOperator::Sub, Operand::Stack(src1), Operand::Stack(src2)) => vec![
-                        Instruction::Mov(Operand::Stack(src1), Operand::Reg(Reg::R10)),
-                        Instruction::Binary(op, Operand::Reg(Reg::R10), Operand::Stack(src2)),
-                    ],
-                    (BinaryOperator::Mul, src1, Operand::Stack(src2)) => vec![
+                    | (BinaryOperator::Sub, Operand::Stack(src1), Operand::Stack(src2))
+                    | (BinaryOperator::ShiftLeft, Operand::Stack(src1), Operand::Stack(src2))
+                    | (BinaryOperator::ShiftRight, Operand::Stack(src1), Operand::Stack(src2)) => {
+                        vec![
+                            Instruction::Mov(Operand::Stack(src1), Operand::Reg(Reg::R10)),
+                            Instruction::Binary(op, Operand::Reg(Reg::R10), Operand::Stack(src2)),
+                        ]
+                    }
+                    (BinaryOperator::Mul, src1, Operand::Stack(src2))
+                    | (BinaryOperator::And, src1, Operand::Stack(src2))
+                    | (BinaryOperator::Or, src1, Operand::Stack(src2))
+                    | (BinaryOperator::Xor, src1, Operand::Stack(src2)) => vec![
                         Instruction::Mov(Operand::Stack(src2), Operand::Reg(Reg::R11)),
                         Instruction::Binary(op, src1, Operand::Reg(Reg::R11)),
                         Instruction::Mov(Operand::Reg(Reg::R11), Operand::Stack(src2)),
@@ -538,6 +574,49 @@ mod tests {
     }
 
     #[test]
+    fn test_pseudo_and_vars() {
+        let prog = ir_prog(vec![ir::Instruction::Binary(
+            ir::BinaryOperator::And,
+            ir::Val::Var("tmp.0".to_string()),
+            ir::Val::Var("tmp.1".to_string()),
+            ir::Val::Var("tmp.2".to_string()),
+        )
+        .into()]);
+
+        let asm = Assembler::new(prog.clone());
+        let prog = asm.replace_pseudoregisters(prog.into());
+
+        let expected = vec![
+            Instruction::AllocateStack(12),
+            Instruction::Mov(Operand::Stack(-4), Operand::Stack(-8)),
+            Instruction::Binary(BinaryOperator::And, Operand::Stack(-12), Operand::Stack(-8)),
+        ];
+
+        assert_eq!(prog.function_definition.instructions, expected);
+    }
+
+    #[test]
+    fn test_fixup_and() {
+        let prog = ir_prog(vec![ir::Instruction::Binary(
+            ir::BinaryOperator::And,
+            ir::Val::Var("tmp.0".to_string()),
+            ir::Val::Var("tmp.1".to_string()),
+            ir::Val::Var("tmp.2".to_string()),
+        )
+        .into()]);
+
+        let asm = Assembler::new(prog.clone());
+        let prog = asm.replace_pseudoregisters(prog.into());
+
+        let expected = vec![
+            Instruction::AllocateStack(12),
+            Instruction::Mov(Operand::Stack(-4), Operand::Stack(-8)),
+            Instruction::Binary(BinaryOperator::And, Operand::Stack(-12), Operand::Stack(-8)),
+        ];
+
+        assert_eq!(prog.function_definition.instructions, expected);
+    }
+    #[test]
     fn test_pseudo_mul_vars() {
         let prog = ir_prog(vec![ir::Instruction::Binary(
             ir::BinaryOperator::Multiply,
@@ -623,5 +702,50 @@ mod tests {
         //         ]
         //     }
         // );
+    }
+
+    #[test]
+    fn test_andl_gen() {
+        let prog = ir_prog(vec![ir::Instruction::Binary(
+            ir::BinaryOperator::And,
+            ir::Val::Constant(3),
+            ir::Val::Var("tmp.0".to_string()),
+            ir::Val::Var("tmp.1".to_string()),
+        )]);
+
+        let assembler = Assembler::new(prog.clone());
+        let program = assembler.run().unwrap();
+        println!("{:#?}", program);
+        println!("{}", program);
+    }
+
+    #[test]
+    fn test_orl_gen() {
+        let prog = ir_prog(vec![ir::Instruction::Binary(
+            ir::BinaryOperator::Or,
+            ir::Val::Constant(3),
+            ir::Val::Var("tmp.0".to_string()),
+            ir::Val::Var("tmp.1".to_string()),
+        )]);
+
+        let assembler = Assembler::new(prog.clone());
+        let program = assembler.run().unwrap();
+        println!("{:#?}", program);
+        println!("{}", program);
+    }
+
+    #[test]
+    fn test_xorl_gen() {
+        let prog = ir_prog(vec![ir::Instruction::Binary(
+            ir::BinaryOperator::Xor,
+            ir::Val::Constant(3),
+            ir::Val::Var("tmp.0".to_string()),
+            ir::Val::Var("tmp.1".to_string()),
+        )]);
+
+        let assembler = Assembler::new(prog.clone());
+        let program = assembler.run().unwrap();
+        println!("{:#?}", program);
+        println!("{}", program);
     }
 }
