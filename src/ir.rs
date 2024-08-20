@@ -38,6 +38,11 @@ pub enum Instruction {
     Return(Val),
     Unary(UnaryOperator, Val, Val),
     Binary(BinaryOperator, Val, Val, Val),
+    Copy(Val, Val),
+    Jump(Identifier),
+    JumpIfZero(Val, Identifier),
+    JumpIfNotZero(Val, Identifier),
+    Label(Identifier),
 }
 
 trait IntoInstructions {
@@ -79,13 +84,60 @@ pub fn emit_ir(
             }
             parser::Factor::Exp(exp) => emit_ir(*exp, instructions, context),
         },
-        parser::Exp::BinaryOperation(oper, val1, val2) => {
-            let val1 = emit_ir(*val1, instructions, context);
-            let val2 = emit_ir(*val2, instructions, context);
-            let dst = Val::Var(context.next_var());
-            instructions.push(Instruction::Binary(oper.into(), val1, val2, dst.clone()));
-            dst
-        }
+        parser::Exp::BinaryOperation(oper, e1, e2) => match oper {
+            parser::BinaryOperator::And | parser::BinaryOperator::Or => {
+                let false_label = context.next_var();
+                let end_label = context.next_var();
+                let result = context.next_var();
+
+                // v1 = result of e1
+                let val1 = emit_ir(*e1, instructions, context);
+                // JumpIfZero v1, false_label
+                if oper == parser::BinaryOperator::And {
+                    instructions.push(Instruction::JumpIfZero(val1.clone(), false_label.clone()));
+                } else {
+                    instructions.push(Instruction::JumpIfNotZero(
+                        val1.clone(),
+                        false_label.clone(),
+                    ));
+                }
+                // v2 = result of e2
+                let val2 = emit_ir(*e2, instructions, context);
+                // JumpIfZero v2, false_label
+                if oper == parser::BinaryOperator::And {
+                    instructions.push(Instruction::JumpIfZero(val2.clone(), false_label.clone()));
+                } else {
+                    instructions.push(Instruction::JumpIfNotZero(
+                        val2.clone(),
+                        false_label.clone(),
+                    ));
+                }
+                // result = 1
+                instructions.push(Instruction::Copy(
+                    Val::Constant(1),
+                    Val::Var(result.clone()),
+                ));
+                // Jump(end)
+                instructions.push(Instruction::Jump(end_label.clone()));
+                // Label(false_label)
+                instructions.push(Instruction::Label(false_label.clone()));
+                // result = 0
+                instructions.push(Instruction::Copy(
+                    Val::Constant(0),
+                    Val::Var(result.clone()),
+                ));
+                // Label(end)
+                instructions.push(Instruction::Label(end_label.clone()));
+                Val::Var(result)
+            }
+            _ => {
+                let val1 = emit_ir(*e1, instructions, context);
+                let val2 = emit_ir(*e2, instructions, context);
+                let dst = Val::Var(context.next_var());
+                instructions.push(Instruction::Binary(oper.into(), val1, val2, dst.clone()));
+                dst
+            }
+        },
     }
 }
 
@@ -124,7 +176,7 @@ pub enum BinaryOperator {
     NotEqual,
     LessThan,
     LessOrEqual,
-    GraterThan,
+    GreaterThan,
     GreaterOrEqual,
 }
 
@@ -147,7 +199,7 @@ impl From<parser::BinaryOperator> for BinaryOperator {
             parser::BinaryOperator::NotEqual => BinaryOperator::NotEqual,
             parser::BinaryOperator::LessThan => BinaryOperator::LessThan,
             parser::BinaryOperator::LessOrEqual => BinaryOperator::LessOrEqual,
-            parser::BinaryOperator::GraterThan => BinaryOperator::GraterThan,
+            parser::BinaryOperator::GraterThan => BinaryOperator::GreaterThan,
             parser::BinaryOperator::GreaterOrEqual => BinaryOperator::GreaterOrEqual,
         }
     }
@@ -273,6 +325,36 @@ mod tests {
                     Val::Var("tmp.1".to_string()),
                     Val::Var("tmp.2".to_string())
                 ),
+                Instruction::Return(Val::Var("tmp.2".to_string()))
+            ]
+        );
+    }
+
+    #[test]
+    fn test_short_circuit() {
+        let program = parser::Program {
+            function_definition: parser::Function {
+                name: "main".to_string(),
+                body: parser::Statement::Return(parser::Exp::BinaryOperation(
+                    parser::BinaryOperator::And,
+                    Box::new(parser::Exp::Factor(parser::Factor::Constant(1))),
+                    Box::new(parser::Exp::Factor(parser::Factor::Constant(2))),
+                )),
+            },
+        };
+        let program = Ir::new(program).run();
+        let instr = program.function_definition.instructions;
+
+        assert_eq!(
+            instr,
+            vec![
+                Instruction::JumpIfZero(Val::Constant(1), "tmp.0".to_string()),
+                Instruction::JumpIfZero(Val::Constant(2), "tmp.0".to_string()),
+                Instruction::Copy(Val::Constant(1), Val::Var("tmp.2".to_string())),
+                Instruction::Jump("tmp.1".to_string()),
+                Instruction::Label("tmp.0".to_string()),
+                Instruction::Copy(Val::Constant(0), Val::Var("tmp.2".to_string())),
+                Instruction::Label("tmp.1".to_string()),
                 Instruction::Return(Val::Var("tmp.2".to_string()))
             ]
         );
