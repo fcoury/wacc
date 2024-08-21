@@ -85,18 +85,20 @@ fn compile(input_file: &Path, args: &Args) -> anyhow::Result<()> {
     }
 
     let tacky = ir::Ir::new(ast).run();
-    println!("Tacky: {:#?}", tacky);
+    println!("\nTacky:");
+    for instr in tacky.iter() {
+        println!("{:?}", instr);
+    }
 
     if args.tacky {
         return Ok(());
     }
 
     let assembler = Assembler::new(tacky);
-    let assembly = assembler.run().context("Failed to assemble file")?;
-    println!("Assembly: {:#?}", assembly);
-
-    if args.codegen {
-        return Ok(());
+    let assembly = assembler.assemble().context("Failed to assemble file")?;
+    println!("\nAssembly:");
+    for line in assembly.iter() {
+        println!("{:?}", line);
     }
 
     let code = assembly.to_string();

@@ -307,8 +307,15 @@ impl Parser<'_> {
 
 pub fn precedence(token: Token) -> u8 {
     match token {
-        Token::Plus | Token::Hyphen => 45,
         Token::Asterisk | Token::Slash | Token::Percent => 50,
+        Token::Plus | Token::Hyphen => 45,
+        Token::Less | Token::LessEquals | Token::Greater | Token::GreaterEquals => 35,
+        Token::EqualsEquals | Token::ExclamationEquals => 30,
+        Token::Ampersand => 30,
+        Token::Caret => 25,
+        Token::Pipe => 20,
+        Token::AmpersandAmpersand => 10,
+        Token::PipePipe => 5,
         _ => 0,
     }
 }

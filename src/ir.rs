@@ -9,6 +9,12 @@ pub struct Program {
     pub function_definition: Function,
 }
 
+impl Program {
+    pub fn iter(&self) -> std::slice::Iter<'_, Instruction> {
+        self.function_definition.instructions.iter()
+    }
+}
+
 impl From<parser::Program> for Program {
     fn from(program: parser::Program) -> Self {
         Program {
@@ -84,55 +90,96 @@ pub fn emit_ir(
             }
             parser::Factor::Exp(exp) => emit_ir(*exp, instructions, context),
         },
-        parser::Exp::BinaryOperation(oper, e1, e2) => match oper {
-            parser::BinaryOperator::And | parser::BinaryOperator::Or => {
-                let false_label = context.next_var();
+        parser::Exp::BinaryOperation(oper, v1, v2) => match oper {
+            parser::BinaryOperator::Or => {
+                let short_circuit_label = context.next_var();
                 let end_label = context.next_var();
                 let result = context.next_var();
 
-                // v1 = result of e1
-                let val1 = emit_ir(*e1, instructions, context);
-                // JumpIfZero v1, false_label
-                if oper == parser::BinaryOperator::And {
-                    instructions.push(Instruction::JumpIfZero(val1.clone(), false_label.clone()));
-                } else {
-                    instructions.push(Instruction::JumpIfNotZero(
-                        val1.clone(),
-                        false_label.clone(),
-                    ));
-                }
-                // v2 = result of e2
-                let val2 = emit_ir(*e2, instructions, context);
-                // JumpIfZero v2, false_label
-                if oper == parser::BinaryOperator::And {
-                    instructions.push(Instruction::JumpIfZero(val2.clone(), false_label.clone()));
-                } else {
-                    instructions.push(Instruction::JumpIfNotZero(
-                        val2.clone(),
-                        false_label.clone(),
-                    ));
-                }
-                // result = 1
-                instructions.push(Instruction::Copy(
-                    Val::Constant(1),
-                    Val::Var(result.clone()),
+                // Evaluate first operand
+                let val1 = emit_ir(*v1, instructions, context);
+
+                // if true (not 0), short-circuit
+                instructions.push(Instruction::JumpIfNotZero(
+                    val1.clone(),
+                    short_circuit_label.clone(),
                 ));
-                // Jump(end)
-                instructions.push(Instruction::Jump(end_label.clone()));
-                // Label(false_label)
-                instructions.push(Instruction::Label(false_label.clone()));
-                // result = 0
+
+                // Evaluate second operand
+                let val2 = emit_ir(*v2, instructions, context);
+
+                // if true (not 0), short-circuit
+                instructions.push(Instruction::JumpIfNotZero(
+                    val2.clone(),
+                    short_circuit_label.clone(),
+                ));
+
+                // Set result based on second operand
                 instructions.push(Instruction::Copy(
                     Val::Constant(0),
                     Val::Var(result.clone()),
                 ));
-                // Label(end)
+                // And jump to end
+                instructions.push(Instruction::Jump(end_label.clone()));
+
+                // False label
+                instructions.push(Instruction::Label(short_circuit_label.clone()));
+                instructions.push(Instruction::Copy(
+                    Val::Constant(1),
+                    Val::Var(result.clone()),
+                ));
+
+                // End label
                 instructions.push(Instruction::Label(end_label.clone()));
+
+                Val::Var(result)
+            }
+            parser::BinaryOperator::And => {
+                let short_circuit_label = context.next_var();
+                let end_label = context.next_var();
+                let result = context.next_var();
+
+                // Evaluate first operand
+                let val1 = emit_ir(*v1, instructions, context);
+
+                // For AND: if false (0), short-circuit
+                instructions.push(Instruction::JumpIfZero(
+                    val1.clone(),
+                    short_circuit_label.clone(),
+                ));
+
+                // Evaluate second operand
+                let val2 = emit_ir(*v2, instructions, context);
+
+                // For AND: if false (0), short-circuit
+                instructions.push(Instruction::JumpIfZero(
+                    val2.clone(),
+                    short_circuit_label.clone(),
+                ));
+
+                // Set result based on second operand
+                instructions.push(Instruction::Copy(
+                    Val::Constant(1),
+                    Val::Var(result.clone()),
+                ));
+                // And jump to end
+                instructions.push(Instruction::Jump(end_label.clone()));
+
+                // False label
+                instructions.push(Instruction::Label(short_circuit_label.clone()));
+                instructions.push(Instruction::Copy(
+                    Val::Constant(0),
+                    Val::Var(result.clone()),
+                ));
+
+                // End label
+                instructions.push(Instruction::Label(end_label.clone()));
+
                 Val::Var(result)
             }
             _ => {
-                let val1 = emit_ir(*e1, instructions, context);
-                let val2 = emit_ir(*e2, instructions, context);
+                let val1 = emit_ir(*v1, instructions, context);
+                let val2 = emit_ir(*v2, instructions, context);
                 let dst = Val::Var(context.next_var());
                 instructions.push(Instruction::Binary(oper.into(), val1, val2, dst.clone()));
                 dst

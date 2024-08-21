@@ -11,6 +11,12 @@ pub struct Program {
     function_definition: Function,
 }
 
+impl Program {
+    pub fn iter(&self) -> std::slice::Iter<'_, Instruction> {
+        self.function_definition.instructions.iter()
+    }
+}
+
 impl From<ir::Program> for Program {
     fn from(program: ir::Program) -> Self {
         Program {
@@ -372,10 +378,15 @@ impl Assembler {
         Assembler { program }
     }
 
-    pub fn run(&self) -> anyhow::Result<String> {
+    pub fn assemble(&self) -> anyhow::Result<Program> {
         let program = self.program.clone().into();
         let program = self.replace_pseudoregisters(program);
         let program = self.fixup_instructions(program);
+        Ok(program)
+    }
+
+    pub fn run(&self) -> anyhow::Result<String> {
+        let program = self.assemble()?;
         Ok(program.to_string())
     }
 
@@ -423,8 +434,8 @@ impl Assembler {
                     Instruction::Cmp(Operand::Reg(Reg::R10), Operand::Stack(op1)),
                 ],
                 Instruction::Cmp(op1, Operand::Imm(op2)) => vec![
-                    Instruction::Mov(Operand::Imm(op2), Operand::Reg(Reg::R10)),
-                    Instruction::Cmp(op1, Operand::Reg(Reg::R10)),
+                    Instruction::Mov(Operand::Imm(op2), Operand::Reg(Reg::R11)),
+                    Instruction::Cmp(op1, Operand::Reg(Reg::R11)),
                 ],
                 instr => vec![instr],
             })
