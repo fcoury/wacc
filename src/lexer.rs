@@ -13,10 +13,10 @@ pub enum Token {
     // then operators
     AmpersandAmpersand,
     PipePipe,
-    EqualsEquals,
-    ExclamationEquals,
-    LessEquals,
-    GreaterEquals,
+    EqualEqual,
+    ExclamationEqual,
+    LessEqual,
+    GreaterEqual,
     TwoHyphens,
     LessLess,
     GreaterGreater,
@@ -32,6 +32,7 @@ pub enum Token {
     Exclamation,
     Less,
     Greater,
+    Equal,
 
     // then single character tokens
     OpenParen,
@@ -58,10 +59,10 @@ impl Token {
             Token::Return => Some(Regex::new(r"^return\b").unwrap()),
             Token::AmpersandAmpersand => Some(Regex::new(r"^\&\&").unwrap()),
             Token::PipePipe => Some(Regex::new(r"^\|\|").unwrap()),
-            Token::EqualsEquals => Some(Regex::new(r"^==").unwrap()),
-            Token::ExclamationEquals => Some(Regex::new(r"^!=").unwrap()),
-            Token::LessEquals => Some(Regex::new(r"^<=").unwrap()),
-            Token::GreaterEquals => Some(Regex::new(r"^>=").unwrap()),
+            Token::EqualEqual => Some(Regex::new(r"^==").unwrap()),
+            Token::ExclamationEqual => Some(Regex::new(r"^!=").unwrap()),
+            Token::LessEqual => Some(Regex::new(r"^<=").unwrap()),
+            Token::GreaterEqual => Some(Regex::new(r"^>=").unwrap()),
             Token::TwoHyphens => Some(Regex::new(r"^\-\-").unwrap()),
             Token::LessLess => Some(Regex::new(r"^<<").unwrap()),
             Token::GreaterGreater => Some(Regex::new(r"^>>").unwrap()),
@@ -82,6 +83,7 @@ impl Token {
             Token::Exclamation => Some(Regex::new(r"^!").unwrap()),
             Token::Less => Some(Regex::new(r"^<").unwrap()),
             Token::Greater => Some(Regex::new(r"^>").unwrap()),
+            Token::Equal => Some(Regex::new(r"^=").unwrap()),
             _ => None,
         }
     }

@@ -237,11 +237,11 @@ impl Parser<'_> {
                 self.take_token();
                 Ok(Some(BinaryOperator::Or))
             }
-            Token::EqualsEquals => {
+            Token::EqualEqual => {
                 self.take_token();
                 Ok(Some(BinaryOperator::Equal))
             }
-            Token::ExclamationEquals => {
+            Token::ExclamationEqual => {
                 self.take_token();
                 Ok(Some(BinaryOperator::NotEqual))
             }
@@ -249,7 +249,7 @@ impl Parser<'_> {
                 self.take_token();
                 Ok(Some(BinaryOperator::LessThan))
             }
-            Token::LessEquals => {
+            Token::LessEqual => {
                 self.take_token();
                 Ok(Some(BinaryOperator::LessOrEqual))
             }
@@ -257,7 +257,7 @@ impl Parser<'_> {
                 self.take_token();
                 Ok(Some(BinaryOperator::GraterThan))
             }
-            Token::GreaterEquals => {
+            Token::GreaterEqual => {
                 self.take_token();
                 Ok(Some(BinaryOperator::GreaterOrEqual))
             }
@@ -309,8 +309,8 @@ pub fn precedence(token: Token) -> u8 {
     match token {
         Token::Asterisk | Token::Slash | Token::Percent => 50,
         Token::Plus | Token::Hyphen => 45,
-        Token::Less | Token::LessEquals | Token::Greater | Token::GreaterEquals => 35,
-        Token::EqualsEquals | Token::ExclamationEquals => 30,
+        Token::Less | Token::LessEqual | Token::Greater | Token::GreaterEqual => 35,
+        Token::EqualEqual | Token::ExclamationEqual => 30,
         Token::Ampersand => 30,
         Token::Caret => 25,
         Token::Pipe => 20,
