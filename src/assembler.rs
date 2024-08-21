@@ -784,8 +784,8 @@ mod tests {
 
         let expected = vec![
             Instruction::AllocateStack(12),
-            Instruction::Mov(Operand::Stack(-4), Operand::Stack(-12)),
-            Instruction::Binary(BinaryOperator::Mul, Operand::Stack(-8), Operand::Stack(-12)),
+            Instruction::Mov(Operand::Stack(-4), Operand::Stack(-8)),
+            Instruction::Binary(BinaryOperator::Mul, Operand::Stack(-12), Operand::Stack(-8)),
         ];
 
         assert_eq!(prog.function_definition.instructions, expected);
