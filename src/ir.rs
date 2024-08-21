@@ -269,7 +269,6 @@ impl Ir {
     }
 }
 
-// New struct to manage context
 pub struct Context {
     next_temp: AtomicI32,
 }

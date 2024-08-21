@@ -4,37 +4,43 @@ use strum_macros::EnumProperty;
 
 use crate::lexer::Token;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Program {
     pub function_definition: Function,
 }
 
-#[derive(Debug, PartialEq)]
+impl Program {
+    pub fn iter(&self) -> std::slice::Iter<BlockItem> {
+        self.function_definition.body.iter()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Function {
     pub name: String,
     pub body: Vec<BlockItem>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum BlockItem {
     Declaration(Declaration),
     Statement(Statement),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Statement {
     Return(Exp),
     Expression(Exp),
     Null,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Declaration {
     pub name: String,
     pub init: Option<Exp>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Exp {
     Factor(Factor),
     Var(String),
@@ -42,14 +48,14 @@ pub enum Exp {
     BinaryOperation(BinaryOperator, Box<Exp>, Box<Exp>),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Factor {
     Constant(i32),
     Unary(UnaryOperator, Box<Factor>),
     Exp(Box<Exp>),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum UnaryOperator {
     Complement,
     Negate,

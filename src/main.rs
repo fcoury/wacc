@@ -2,6 +2,7 @@ mod assembler;
 mod ir;
 mod lexer;
 mod parser;
+mod semantic;
 
 use anyhow::Context;
 use assembler::Assembler;
@@ -21,6 +22,10 @@ struct Args {
     /// run the lexer and parser, stop before assembly
     #[clap(long)]
     parse: bool,
+
+    // run lexer and parser, stop before semantic analysis
+    #[clap(long)]
+    validate: bool,
 
     // run lexer, parser, TACKY ir, stop before assembly
     #[clap(long)]
@@ -81,6 +86,13 @@ fn compile(input_file: &Path, args: &Args) -> anyhow::Result<()> {
     println!("AST: {:#?}", ast);
 
     if args.parse {
+        return Ok(());
+    }
+
+    let mut analysis = semantic::Analysis::new(ast);
+    let ast = analysis.run().context("Failed to validate file")?;
+
+    if args.validate {
         return Ok(());
     }
 
