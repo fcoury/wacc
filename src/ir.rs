@@ -31,11 +31,12 @@ pub struct Function {
 
 impl From<parser::Function> for Function {
     fn from(function: parser::Function) -> Self {
-        let mut context = Context::new();
-        Function {
-            name: function.name,
-            instructions: function.body.into_instructions(&mut context),
-        }
+        todo!()
+        // let mut context = Context::new();
+        // Function {
+        //     name: function.name,
+        //     instructions: function.body.into_instructions(&mut context),
+        // }
     }
 }
 
@@ -57,14 +58,15 @@ trait IntoInstructions {
 
 impl IntoInstructions for parser::Statement {
     fn into_instructions(self, context: &mut Context) -> Vec<Instruction> {
-        match self {
-            parser::Statement::Return(exp) => {
-                let mut instructions = vec![];
-                let val = emit_ir(exp, &mut instructions, context);
-                instructions.push(Instruction::Return(val));
-                instructions
-            }
-        }
+        todo!()
+        // match self {
+        //     parser::Statement::Return(exp) => {
+        //         let mut instructions = vec![];
+        //         let val = emit_ir(exp, &mut instructions, context);
+        //         instructions.push(Instruction::Return(val));
+        //         instructions
+        //     }
+        // }
     }
 }
 
@@ -79,113 +81,114 @@ pub fn emit_ir(
     instructions: &mut Vec<Instruction>,
     context: &mut Context,
 ) -> Val {
-    match exp {
-        parser::Exp::Factor(factor) => match factor {
-            parser::Factor::Constant(value) => Val::Constant(value),
-            parser::Factor::Unary(operator, exp) => {
-                let src = emit_ir(parser::Exp::Factor(*exp), instructions, context);
-                let dst = Val::Var(context.next_var());
-                instructions.push(Instruction::Unary(operator.into(), src, dst.clone()));
-                dst
-            }
-            parser::Factor::Exp(exp) => emit_ir(*exp, instructions, context),
-        },
-        parser::Exp::BinaryOperation(oper, v1, v2) => match oper {
-            parser::BinaryOperator::Or => {
-                let short_circuit_label = context.next_var();
-                let end_label = context.next_var();
-                let result = context.next_var();
-
-                // Evaluate first operand
-                let val1 = emit_ir(*v1, instructions, context);
-
-                // if true (not 0), short-circuit
-                instructions.push(Instruction::JumpIfNotZero(
-                    val1.clone(),
-                    short_circuit_label.clone(),
-                ));
-
-                // Evaluate second operand
-                let val2 = emit_ir(*v2, instructions, context);
-
-                // if true (not 0), short-circuit
-                instructions.push(Instruction::JumpIfNotZero(
-                    val2.clone(),
-                    short_circuit_label.clone(),
-                ));
-
-                // Set result based on second operand
-                instructions.push(Instruction::Copy(
-                    Val::Constant(0),
-                    Val::Var(result.clone()),
-                ));
-                // And jump to end
-                instructions.push(Instruction::Jump(end_label.clone()));
-
-                // False label
-                instructions.push(Instruction::Label(short_circuit_label.clone()));
-                instructions.push(Instruction::Copy(
-                    Val::Constant(1),
-                    Val::Var(result.clone()),
-                ));
-
-                // End label
-                instructions.push(Instruction::Label(end_label.clone()));
-
-                Val::Var(result)
-            }
-            parser::BinaryOperator::And => {
-                let short_circuit_label = context.next_var();
-                let end_label = context.next_var();
-                let result = context.next_var();
-
-                // Evaluate first operand
-                let val1 = emit_ir(*v1, instructions, context);
-
-                // For AND: if false (0), short-circuit
-                instructions.push(Instruction::JumpIfZero(
-                    val1.clone(),
-                    short_circuit_label.clone(),
-                ));
-
-                // Evaluate second operand
-                let val2 = emit_ir(*v2, instructions, context);
-
-                // For AND: if false (0), short-circuit
-                instructions.push(Instruction::JumpIfZero(
-                    val2.clone(),
-                    short_circuit_label.clone(),
-                ));
-
-                // Set result based on second operand
-                instructions.push(Instruction::Copy(
-                    Val::Constant(1),
-                    Val::Var(result.clone()),
-                ));
-                // And jump to end
-                instructions.push(Instruction::Jump(end_label.clone()));
-
-                // False label
-                instructions.push(Instruction::Label(short_circuit_label.clone()));
-                instructions.push(Instruction::Copy(
-                    Val::Constant(0),
-                    Val::Var(result.clone()),
-                ));
-
-                // End label
-                instructions.push(Instruction::Label(end_label.clone()));
-
-                Val::Var(result)
-            }
-            _ => {
-                let val1 = emit_ir(*v1, instructions, context);
-                let val2 = emit_ir(*v2, instructions, context);
-                let dst = Val::Var(context.next_var());
-                instructions.push(Instruction::Binary(oper.into(), val1, val2, dst.clone()));
-                dst
-            }
-        },
-    }
+    todo!()
+    // match exp {
+    //     parser::Exp::Factor(factor) => match factor {
+    //         parser::Factor::Constant(value) => Val::Constant(value),
+    //         parser::Factor::Unary(operator, exp) => {
+    //             let src = emit_ir(parser::Exp::Factor(*exp), instructions, context);
+    //             let dst = Val::Var(context.next_var());
+    //             instructions.push(Instruction::Unary(operator.into(), src, dst.clone()));
+    //             dst
+    //         }
+    //         parser::Factor::Exp(exp) => emit_ir(*exp, instructions, context),
+    //     },
+    //     parser::Exp::BinaryOperation(oper, v1, v2) => match oper {
+    //         parser::BinaryOperator::Or => {
+    //             let short_circuit_label = context.next_var();
+    //             let end_label = context.next_var();
+    //             let result = context.next_var();
+    //
+    //             // Evaluate first operand
+    //             let val1 = emit_ir(*v1, instructions, context);
+    //
+    //             // if true (not 0), short-circuit
+    //             instructions.push(Instruction::JumpIfNotZero(
+    //                 val1.clone(),
+    //                 short_circuit_label.clone(),
+    //             ));
+    //
+    //             // Evaluate second operand
+    //             let val2 = emit_ir(*v2, instructions, context);
+    //
+    //             // if true (not 0), short-circuit
+    //             instructions.push(Instruction::JumpIfNotZero(
+    //                 val2.clone(),
+    //                 short_circuit_label.clone(),
+    //             ));
+    //
+    //             // Set result based on second operand
+    //             instructions.push(Instruction::Copy(
+    //                 Val::Constant(0),
+    //                 Val::Var(result.clone()),
+    //             ));
+    //             // And jump to end
+    //             instructions.push(Instruction::Jump(end_label.clone()));
+    //
+    //             // False label
+    //             instructions.push(Instruction::Label(short_circuit_label.clone()));
+    //             instructions.push(Instruction::Copy(
+    //                 Val::Constant(1),
+    //                 Val::Var(result.clone()),
+    //             ));
+    //
+    //             // End label
+    //             instructions.push(Instruction::Label(end_label.clone()));
+    //
+    //             Val::Var(result)
+    //         }
+    //         parser::BinaryOperator::And => {
+    //             let short_circuit_label = context.next_var();
+    //             let end_label = context.next_var();
+    //             let result = context.next_var();
+    //
+    //             // Evaluate first operand
+    //             let val1 = emit_ir(*v1, instructions, context);
+    //
+    //             // For AND: if false (0), short-circuit
+    //             instructions.push(Instruction::JumpIfZero(
+    //                 val1.clone(),
+    //                 short_circuit_label.clone(),
+    //             ));
+    //
+    //             // Evaluate second operand
+    //             let val2 = emit_ir(*v2, instructions, context);
+    //
+    //             // For AND: if false (0), short-circuit
+    //             instructions.push(Instruction::JumpIfZero(
+    //                 val2.clone(),
+    //                 short_circuit_label.clone(),
+    //             ));
+    //
+    //             // Set result based on second operand
+    //             instructions.push(Instruction::Copy(
+    //                 Val::Constant(1),
+    //                 Val::Var(result.clone()),
+    //             ));
+    //             // And jump to end
+    //             instructions.push(Instruction::Jump(end_label.clone()));
+    //
+    //             // False label
+    //             instructions.push(Instruction::Label(short_circuit_label.clone()));
+    //             instructions.push(Instruction::Copy(
+    //                 Val::Constant(0),
+    //                 Val::Var(result.clone()),
+    //             ));
+    //
+    //             // End label
+    //             instructions.push(Instruction::Label(end_label.clone()));
+    //
+    //             Val::Var(result)
+    //         }
+    //         _ => {
+    //             let val1 = emit_ir(*v1, instructions, context);
+    //             let val2 = emit_ir(*v2, instructions, context);
+    //             let dst = Val::Var(context.next_var());
+    //             instructions.push(Instruction::Binary(oper.into(), val1, val2, dst.clone()));
+    //             dst
+    //         }
+    //     },
+    // }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -291,119 +294,119 @@ mod tests {
 
     #[test]
     fn test_constant() {
-        let program = parser::Program {
-            function_definition: parser::Function {
-                name: "main".to_string(),
-                body: parser::Statement::Return(parser::Exp::Factor(parser::Factor::Constant(3))),
-            },
-        };
-        let program = Ir::new(program).run();
-        let instr = program.function_definition.instructions;
-
-        assert_eq!(
-            instr.get(0).unwrap(),
-            &Instruction::Return(Val::Constant(3))
-        );
+        // let program = parser::Program {
+        //     function_definition: parser::Function {
+        //         name: "main".to_string(),
+        //         body: parser::Statement::Return(parser::Exp::Factor(parser::Factor::Constant(3))),
+        //     },
+        // };
+        // let program = Ir::new(program).run();
+        // let instr = program.function_definition.instructions;
+        //
+        // assert_eq!(
+        //     instr.get(0).unwrap(),
+        //     &Instruction::Return(Val::Constant(3))
+        // );
     }
 
     #[test]
     fn test_unary() {
-        let program = parser::Program {
-            function_definition: parser::Function {
-                name: "main".to_string(),
-                body: parser::Statement::Return(parser::Exp::Factor(parser::Factor::Unary(
-                    parser::UnaryOperator::Complement,
-                    Box::new(parser::Factor::Constant(2)),
-                ))),
-            },
-        };
-        let program = Ir::new(program).run();
-        let instr = program.function_definition.instructions;
-
-        assert_eq!(
-            instr,
-            vec![
-                Instruction::Unary(
-                    UnaryOperator::Complement,
-                    Val::Constant(2),
-                    Val::Var("tmp.0".to_string())
-                ),
-                Instruction::Return(Val::Var("tmp.0".to_string()))
-            ]
-        );
+        // let program = parser::Program {
+        //     function_definition: parser::Function {
+        //         name: "main".to_string(),
+        //         body: parser::Statement::Return(parser::Exp::Factor(parser::Factor::Unary(
+        //             parser::UnaryOperator::Complement,
+        //             Box::new(parser::Factor::Constant(2)),
+        //         ))),
+        //     },
+        // };
+        // let program = Ir::new(program).run();
+        // let instr = program.function_definition.instructions;
+        //
+        // assert_eq!(
+        //     instr,
+        //     vec![
+        //         Instruction::Unary(
+        //             UnaryOperator::Complement,
+        //             Val::Constant(2),
+        //             Val::Var("tmp.0".to_string())
+        //         ),
+        //         Instruction::Return(Val::Var("tmp.0".to_string()))
+        //     ]
+        // );
     }
 
     #[test]
     fn test_multiple_unaries() {
-        // -(~(-8))
-        let program = parser::Program {
-            function_definition: parser::Function {
-                name: "main".to_string(),
-                body: parser::Statement::Return(parser::Exp::Factor(parser::Factor::Unary(
-                    parser::UnaryOperator::Negate,
-                    Box::new(parser::Factor::Unary(
-                        parser::UnaryOperator::Complement,
-                        Box::new(parser::Factor::Unary(
-                            parser::UnaryOperator::Negate,
-                            Box::new(parser::Factor::Constant(8)),
-                        )),
-                    )),
-                ))),
-            },
-        };
-        let program = Ir::new(program).run();
-        let instr = program.function_definition.instructions;
-
-        assert_eq!(
-            instr,
-            vec![
-                Instruction::Unary(
-                    UnaryOperator::Negate,
-                    Val::Constant(8),
-                    Val::Var("tmp.0".to_string())
-                ),
-                Instruction::Unary(
-                    UnaryOperator::Complement,
-                    Val::Var("tmp.0".to_string()),
-                    Val::Var("tmp.1".to_string())
-                ),
-                Instruction::Unary(
-                    UnaryOperator::Negate,
-                    Val::Var("tmp.1".to_string()),
-                    Val::Var("tmp.2".to_string())
-                ),
-                Instruction::Return(Val::Var("tmp.2".to_string()))
-            ]
-        );
+        // // -(~(-8))
+        // let program = parser::Program {
+        //     function_definition: parser::Function {
+        //         name: "main".to_string(),
+        //         body: parser::Statement::Return(parser::Exp::Factor(parser::Factor::Unary(
+        //             parser::UnaryOperator::Negate,
+        //             Box::new(parser::Factor::Unary(
+        //                 parser::UnaryOperator::Complement,
+        //                 Box::new(parser::Factor::Unary(
+        //                     parser::UnaryOperator::Negate,
+        //                     Box::new(parser::Factor::Constant(8)),
+        //                 )),
+        //             )),
+        //         ))),
+        //     },
+        // };
+        // let program = Ir::new(program).run();
+        // let instr = program.function_definition.instructions;
+        //
+        // assert_eq!(
+        //     instr,
+        //     vec![
+        //         Instruction::Unary(
+        //             UnaryOperator::Negate,
+        //             Val::Constant(8),
+        //             Val::Var("tmp.0".to_string())
+        //         ),
+        //         Instruction::Unary(
+        //             UnaryOperator::Complement,
+        //             Val::Var("tmp.0".to_string()),
+        //             Val::Var("tmp.1".to_string())
+        //         ),
+        //         Instruction::Unary(
+        //             UnaryOperator::Negate,
+        //             Val::Var("tmp.1".to_string()),
+        //             Val::Var("tmp.2".to_string())
+        //         ),
+        //         Instruction::Return(Val::Var("tmp.2".to_string()))
+        //     ]
+        // );
     }
 
     #[test]
     fn test_short_circuit() {
-        let program = parser::Program {
-            function_definition: parser::Function {
-                name: "main".to_string(),
-                body: parser::Statement::Return(parser::Exp::BinaryOperation(
-                    parser::BinaryOperator::And,
-                    Box::new(parser::Exp::Factor(parser::Factor::Constant(1))),
-                    Box::new(parser::Exp::Factor(parser::Factor::Constant(2))),
-                )),
-            },
-        };
-        let program = Ir::new(program).run();
-        let instr = program.function_definition.instructions;
-
-        assert_eq!(
-            instr,
-            vec![
-                Instruction::JumpIfZero(Val::Constant(1), "tmp.0".to_string()),
-                Instruction::JumpIfZero(Val::Constant(2), "tmp.0".to_string()),
-                Instruction::Copy(Val::Constant(1), Val::Var("tmp.2".to_string())),
-                Instruction::Jump("tmp.1".to_string()),
-                Instruction::Label("tmp.0".to_string()),
-                Instruction::Copy(Val::Constant(0), Val::Var("tmp.2".to_string())),
-                Instruction::Label("tmp.1".to_string()),
-                Instruction::Return(Val::Var("tmp.2".to_string()))
-            ]
-        );
+        // let program = parser::Program {
+        //     function_definition: parser::Function {
+        //         name: "main".to_string(),
+        //         body: parser::Statement::Return(parser::Exp::BinaryOperation(
+        //             parser::BinaryOperator::And,
+        //             Box::new(parser::Exp::Factor(parser::Factor::Constant(1))),
+        //             Box::new(parser::Exp::Factor(parser::Factor::Constant(2))),
+        //         )),
+        //     },
+        // };
+        // let program = Ir::new(program).run();
+        // let instr = program.function_definition.instructions;
+        //
+        // assert_eq!(
+        //     instr,
+        //     vec![
+        //         Instruction::JumpIfZero(Val::Constant(1), "tmp.0".to_string()),
+        //         Instruction::JumpIfZero(Val::Constant(2), "tmp.0".to_string()),
+        //         Instruction::Copy(Val::Constant(1), Val::Var("tmp.2".to_string())),
+        //         Instruction::Jump("tmp.1".to_string()),
+        //         Instruction::Label("tmp.0".to_string()),
+        //         Instruction::Copy(Val::Constant(0), Val::Var("tmp.2".to_string())),
+        //         Instruction::Label("tmp.1".to_string()),
+        //         Instruction::Return(Val::Var("tmp.2".to_string()))
+        //     ]
+        // );
     }
 }

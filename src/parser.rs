@@ -12,17 +12,33 @@ pub struct Program {
 #[derive(Debug, PartialEq)]
 pub struct Function {
     pub name: String,
-    pub body: Statement,
+    pub body: Vec<BlockItem>,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum BlockItem {
+    Declaration(Declaration),
+    Statement(Statement),
 }
 
 #[derive(Debug, PartialEq)]
 pub enum Statement {
     Return(Exp),
+    Expression(Exp),
+    Null,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Declaration {
+    pub name: String,
+    pub init: Option<Exp>,
 }
 
 #[derive(Debug, PartialEq)]
 pub enum Exp {
     Factor(Factor),
+    Var(String),
+    Assignment(Box<Exp>, Box<Exp>),
     BinaryOperation(BinaryOperator, Box<Exp>, Box<Exp>),
 }
 
@@ -115,10 +131,32 @@ impl Parser<'_> {
         self.expect(Token::Void)?;
         self.expect(Token::CloseParen)?;
         self.expect(Token::OpenBrace)?;
-        let body = self.parse_statement()?;
+
+        let mut body = vec![];
+        while self.peek() != Some(Token::CloseBrace) {
+            let next_block_item = self.parse_block_item()?;
+            body.push(next_block_item);
+        }
+
         self.expect(Token::CloseBrace)?;
 
         Ok(Function { name, body })
+    }
+    pub fn parse_block_item(&mut self) -> anyhow::Result<BlockItem> {
+        if self.peek() == Some(Token::IntKeyword) {
+            self.take_token();
+            let name = self.parse_identifier()?;
+            let init = if self.peek() == Some(Token::Equal) {
+                self.take_token();
+                Some(self.parse_exp(None)?)
+            } else {
+                None
+            };
+            self.expect(Token::Semicolon)?;
+            Ok(BlockItem::Declaration(Declaration { name, init }))
+        } else {
+            Ok(BlockItem::Statement(self.parse_statement()?))
+        }
     }
 
     pub fn parse_identifier(&mut self) -> anyhow::Result<String> {
@@ -131,10 +169,19 @@ impl Parser<'_> {
     }
 
     pub fn parse_statement(&mut self) -> anyhow::Result<Statement> {
-        self.expect(Token::Return)?;
-        let return_val = self.parse_exp(None)?;
-        self.expect(Token::Semicolon)?;
-        Ok(Statement::Return(return_val))
+        if self.peek() == Some(Token::Return) {
+            self.take_token(); // skips Return
+            let return_val = self.parse_exp(None)?;
+            self.expect(Token::Semicolon)?;
+            Ok(Statement::Return(return_val))
+        } else if self.peek() == Some(Token::Semicolon) {
+            self.take_token(); // skips Semicolon
+            Ok(Statement::Null)
+        } else {
+            let exp = self.parse_exp(None)?;
+            self.expect(Token::Semicolon)?;
+            Ok(Statement::Expression(exp))
+        }
     }
 
     pub fn parse_factor(&mut self) -> anyhow::Result<Factor> {
@@ -154,6 +201,9 @@ impl Parser<'_> {
             let exp = self.parse_exp(None)?;
             self.expect(Token::CloseParen)?;
             Ok(Factor::Exp(Box::new(exp)))
+        } else if let Token::Identifier(name) = &self.tokens[0] {
+            self.tokens = &self.tokens[1..];
+            Ok(Factor::Exp(Box::new(Exp::Var(name.to_string()))))
         } else {
             anyhow::bail!(
                 "Expected constant or unary operator, found {:?}",
@@ -169,16 +219,23 @@ impl Parser<'_> {
             let Some(next_token) = self.peek() else {
                 break;
             };
-            if !(precedence(next_token) >= min_prec.unwrap_or(0)) {
+            if !(precedence(&next_token) >= min_prec.unwrap_or(0)) {
                 break;
             }
-            let Some(operator) = self.parse_binary_operator()? else {
-                break;
-            };
 
-            let oper_prec = operator.precedence();
-            let right = self.parse_exp(Some(oper_prec + 1))?;
-            left = Exp::BinaryOperation(operator, Box::new(left), Box::new(right));
+            if next_token == Token::Equal {
+                self.take_token();
+                let right = self.parse_exp(Some(precedence(&next_token)))?;
+                left = Exp::Assignment(Box::new(left), Box::new(right));
+            } else {
+                let Some(operator) = self.parse_binary_operator()? else {
+                    break;
+                };
+
+                let oper_prec = operator.precedence();
+                let right = self.parse_exp(Some(oper_prec + 1))?;
+                left = Exp::BinaryOperation(operator, Box::new(left), Box::new(right));
+            }
         }
         Ok(left)
     }
@@ -305,7 +362,7 @@ impl Parser<'_> {
     }
 }
 
-pub fn precedence(token: Token) -> u8 {
+pub fn precedence(token: &Token) -> u8 {
     match token {
         Token::Asterisk | Token::Slash | Token::Percent => 50,
         Token::Plus | Token::Hyphen => 45,
@@ -316,6 +373,7 @@ pub fn precedence(token: Token) -> u8 {
         Token::Pipe => 20,
         Token::AmpersandAmpersand => 10,
         Token::PipePipe => 5,
+        Token::Equal => 0,
         _ => 0,
     }
 }
