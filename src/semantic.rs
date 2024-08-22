@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::atomic::AtomicI32};
 
-use crate::parser::{BlockItem, Declaration, Program};
+use crate::parser::{BlockItem, Declaration, Exp, Factor, Program, Statement};
 
 pub struct Analysis {
     program: crate::parser::Program,
@@ -16,28 +16,84 @@ impl Analysis {
     }
 
     pub fn run(&mut self) -> anyhow::Result<Program> {
-        let program = self.resolve_declarations()?;
-
+        let program = self.resolve_program()?;
         Ok(program)
     }
 
-    fn resolve_declarations(&mut self) -> anyhow::Result<Program> {
+    fn resolve_program(&mut self) -> anyhow::Result<Program> {
         let mut program = self.program.clone();
         let items = program.function_definition.body;
 
         let mut context = Context::new();
 
-        let mut block_items = vec![];
+        let mut block_items = Vec::with_capacity(items.len());
         for block_item in items.iter() {
-            if let BlockItem::Declaration(declaration) = block_item {
-                block_items.push(self.resolve_declaration(&mut context, declaration)?);
-            } else {
-                block_items.push(block_item.clone());
+            match block_item {
+                BlockItem::Declaration(declaration) => {
+                    block_items.push(self.resolve_declaration(&mut context, declaration)?)
+                }
+                BlockItem::Statement(statement) => {
+                    block_items.push(self.resolve_statement(&mut context, statement)?)
+                }
             }
         }
 
         program.function_definition.body = block_items;
         Ok(program)
+    }
+
+    fn resolve_statement(
+        &mut self,
+        context: &mut Context,
+        statement: &Statement,
+    ) -> anyhow::Result<BlockItem> {
+        let statement = match statement {
+            Statement::Return(expr) => Statement::Return(self.resolve_exp(context, expr)?),
+            Statement::Expression(expr) => Statement::Expression(self.resolve_exp(context, expr)?),
+            Statement::Null => Statement::Null,
+        };
+
+        Ok(BlockItem::Statement(statement))
+    }
+
+    fn resolve_exp(&mut self, context: &mut Context, exp: &Exp) -> anyhow::Result<Exp> {
+        match exp {
+            Exp::Assignment(left, right) => {
+                let Exp::Var(_) = left.as_ref() else {
+                    anyhow::bail!(
+                        "Invalid assignment target. Expected variable, found {:?}",
+                        left
+                    );
+                };
+                let left = self.resolve_exp(context, left.as_ref())?;
+                let right = self.resolve_exp(context, right.as_ref())?;
+                Ok(Exp::Assignment(Box::new(left), Box::new(right)))
+            }
+            Exp::Var(name) => {
+                if self.variable_map.contains_key(name) {
+                    Ok(Exp::Var(self.variable_map[name].clone()))
+                } else {
+                    anyhow::bail!("Variable {} not declared", name);
+                }
+            }
+            Exp::Factor(factor) => Ok(Exp::Factor(self.resolve_factor(context, factor)?)),
+            Exp::BinaryOperation(op, left, right) => {
+                let left = self.resolve_exp(context, left.as_ref())?;
+                let right = self.resolve_exp(context, right.as_ref())?;
+                Ok(Exp::BinaryOperation(*op, Box::new(left), Box::new(right)))
+            }
+        }
+    }
+
+    fn resolve_factor(&mut self, context: &mut Context, factor: &Factor) -> anyhow::Result<Factor> {
+        match factor {
+            Factor::Constant(_) => Ok(factor.clone()),
+            Factor::Unary(op, factor) => {
+                let factor = self.resolve_factor(context, factor.as_ref())?;
+                Ok(Factor::Unary(op.clone(), Box::new(factor)))
+            }
+            Factor::Exp(exp) => Ok(Factor::Exp(Box::new(self.resolve_exp(context, exp)?))),
+        }
     }
 
     fn resolve_declaration(
@@ -74,7 +130,7 @@ impl Context {
     pub fn next_var(&self, name: &str) -> String {
         let temp = self
             .next_temp
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         format!("{}_{}", name, temp)
     }
 }
