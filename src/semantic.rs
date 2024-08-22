@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::atomic::AtomicI32};
 
-use crate::parser::{BlockItem, Declaration, Exp, Factor, Program, Statement};
+use crate::parser::{BlockItem, Declaration, Exp, Program, Statement};
 
 pub struct Analysis {
     program: crate::parser::Program,
@@ -59,14 +59,14 @@ impl Analysis {
     fn resolve_exp(&mut self, context: &mut Context, exp: &Exp) -> anyhow::Result<Exp> {
         match exp {
             Exp::Assignment(left, right) => {
-                let Exp::Var(_) = left.as_ref() else {
+                let left = self.resolve_exp(context, left.as_ref())?;
+                let right = self.resolve_exp(context, right.as_ref())?;
+                let Exp::Var(_) = left else {
                     anyhow::bail!(
                         "Invalid assignment target. Expected variable, found {:?}",
                         left
                     );
                 };
-                let left = self.resolve_exp(context, left.as_ref())?;
-                let right = self.resolve_exp(context, right.as_ref())?;
                 Ok(Exp::Assignment(Box::new(left), Box::new(right)))
             }
             Exp::Var(name) => {
@@ -76,7 +76,12 @@ impl Analysis {
                     anyhow::bail!("Variable {} not declared", name);
                 }
             }
-            Exp::Factor(factor) => Ok(Exp::Factor(self.resolve_factor(context, factor)?)),
+            // Exp::Factor(factor) => Ok(Exp::Factor(self.resolve_factor(context, factor)?)),
+            Exp::Constant(_) => Ok(exp.clone()),
+            Exp::Unary(op, exp) => {
+                let factor = self.resolve_exp(context, exp.as_ref())?;
+                Ok(Exp::Unary(op.clone(), Box::new(factor)))
+            }
             Exp::BinaryOperation(op, left, right) => {
                 let left = self.resolve_exp(context, left.as_ref())?;
                 let right = self.resolve_exp(context, right.as_ref())?;
@@ -85,16 +90,15 @@ impl Analysis {
         }
     }
 
-    fn resolve_factor(&mut self, context: &mut Context, factor: &Factor) -> anyhow::Result<Factor> {
-        match factor {
-            Factor::Constant(_) => Ok(factor.clone()),
-            Factor::Unary(op, factor) => {
-                let factor = self.resolve_factor(context, factor.as_ref())?;
-                Ok(Factor::Unary(op.clone(), Box::new(factor)))
-            }
-            Factor::Exp(exp) => Ok(Factor::Exp(Box::new(self.resolve_exp(context, exp)?))),
-        }
-    }
+    // fn resolve_factor(&mut self, context: &mut Context, factor: &Factor) -> anyhow::Result<Factor> {
+    //     match factor {
+    //         Exp::Constant(_) => Ok(factor.clone()),
+    //         Exp::Unary(op, factor) => {
+    //             let factor = self.resolve_factor(context, factor.as_ref())?;
+    //             Ok(Factor::Unary(op.clone(), Box::new(factor)))
+    //         }
+    //     }
+    // }
 
     fn resolve_declaration(
         &mut self,

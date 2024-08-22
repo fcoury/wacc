@@ -42,17 +42,11 @@ pub struct Declaration {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Exp {
-    Factor(Factor),
+    Constant(i32),
     Var(String),
     Assignment(Box<Exp>, Box<Exp>),
+    Unary(UnaryOperator, Box<Exp>),
     BinaryOperation(BinaryOperator, Box<Exp>, Box<Exp>),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum Factor {
-    Constant(i32),
-    Unary(UnaryOperator, Box<Factor>),
-    Exp(Box<Exp>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -190,26 +184,26 @@ impl Parser<'_> {
         }
     }
 
-    pub fn parse_factor(&mut self) -> anyhow::Result<Factor> {
+    pub fn parse_factor(&mut self) -> anyhow::Result<Exp> {
         let next_token = self.peek();
         if let Token::Int(val) = self.tokens[0] {
             self.tokens = &self.tokens[1..];
-            Ok(Factor::Constant(val))
+            Ok(Exp::Constant(val))
         } else if next_token == Some(Token::Tilde)
             || next_token == Some(Token::Hyphen)
             || next_token == Some(Token::Exclamation)
         {
             let operator = self.parse_unary_operator()?;
             let inner_exp = Box::new(self.parse_factor()?);
-            Ok(Factor::Unary(operator, inner_exp))
+            Ok(Exp::Unary(operator, inner_exp))
         } else if next_token == Some(Token::OpenParen) {
             self.take_token(); // skips OpenParen
             let exp = self.parse_exp(None)?;
             self.expect(Token::CloseParen)?;
-            Ok(Factor::Exp(Box::new(exp)))
+            Ok(exp)
         } else if let Token::Identifier(name) = &self.tokens[0] {
             self.tokens = &self.tokens[1..];
-            Ok(Factor::Exp(Box::new(Exp::Var(name.to_string()))))
+            Ok(Exp::Var(name.to_string()))
         } else {
             anyhow::bail!(
                 "Expected constant or unary operator, found {:?}",
@@ -219,7 +213,7 @@ impl Parser<'_> {
     }
 
     pub fn parse_exp(&mut self, min_prec: Option<u8>) -> anyhow::Result<Exp> {
-        let mut left = Exp::Factor(self.parse_factor()?);
+        let mut left = self.parse_factor()?;
 
         loop {
             let Some(next_token) = self.peek() else {
@@ -400,17 +394,17 @@ mod tests {
             BinaryOperator::Subtract,
             Box::new(Exp::BinaryOperation(
                 BinaryOperator::Multiply,
-                Box::new(Exp::Factor(Factor::Constant(1))),
-                Box::new(Exp::Factor(Factor::Constant(2))),
+                Box::new(Exp::Constant(1)),
+                Box::new(Exp::Constant(2)),
             )),
             Box::new(Exp::BinaryOperation(
                 BinaryOperator::Multiply,
-                Box::new(Exp::Factor(Factor::Constant(3))),
-                Box::new(Exp::Factor(Factor::Exp(Box::new(Exp::BinaryOperation(
+                Box::new(Exp::Constant(3)),
+                Box::new(Exp::BinaryOperation(
                     BinaryOperator::Add,
-                    Box::new(Exp::Factor(Factor::Constant(4))),
-                    Box::new(Exp::Factor(Factor::Constant(5))),
-                ))))),
+                    Box::new(Exp::Constant(4)),
+                    Box::new(Exp::Constant(5)),
+                )),
             )),
         );
 
