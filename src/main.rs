@@ -75,7 +75,10 @@ fn compile(input_file: &Path, args: &Args) -> anyhow::Result<()> {
     let mut lexer = Lexer::new(&input);
     let tokens = lexer.run().context("Failed to lex file")?;
     std::fs::remove_file(input_file).context("Failed to delete input file")?;
-    println!("Tokens: {:#?}", tokens);
+    println!("Tokens:");
+    for token in tokens.iter() {
+        println!("{:?}", token);
+    }
 
     if args.lex {
         return Ok(());
@@ -83,7 +86,10 @@ fn compile(input_file: &Path, args: &Args) -> anyhow::Result<()> {
 
     let mut parser = crate::parser::Parser::new(&tokens);
     let ast = parser.run().context("Failed to parse file")?;
-    println!("AST: {:#?}", ast);
+    println!("\nAST:");
+    for line in ast.iter() {
+        println!("{:?}", line);
+    }
 
     if args.parse {
         return Ok(());
@@ -91,6 +97,10 @@ fn compile(input_file: &Path, args: &Args) -> anyhow::Result<()> {
 
     let mut analysis = semantic::Analysis::new(ast);
     let ast = analysis.run().context("Failed to validate file")?;
+    println!("\nAST after Semantic Pass:");
+    for line in ast.iter() {
+        println!("{:?}", line);
+    }
 
     if args.validate {
         return Ok(());

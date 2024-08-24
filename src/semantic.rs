@@ -113,9 +113,14 @@ impl Analysis {
         self.variable_map
             .insert(declaration.name.clone(), unique_name.clone());
 
+        let init = match &declaration.init {
+            Some(exp) => Some(self.resolve_exp(context, exp)?),
+            None => None,
+        };
+
         Ok(BlockItem::Declaration(Declaration {
             name: unique_name,
-            ..declaration.clone()
+            init,
         }))
     }
 }
