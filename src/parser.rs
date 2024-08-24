@@ -235,7 +235,8 @@ impl Parser<'_> {
             let Some(next_token) = self.peek() else {
                 break;
             };
-            if !(precedence(&next_token) >= min_prec.unwrap_or(0)) {
+            let next_prec = precedence(&next_token);
+            if !(next_prec >= min_prec.unwrap_or(0)) {
                 break;
             }
 
@@ -254,8 +255,8 @@ impl Parser<'_> {
                     break;
                 };
 
-                let oper_prec = operator.precedence();
-                let right = self.parse_exp(Some(oper_prec + 1))?;
+                // let oper_prec = operator.precedence();
+                let right = self.parse_exp(Some(next_prec + 1))?;
                 left = Exp::BinaryOperation(operator, Box::new(left), Box::new(right));
             }
         }
@@ -396,6 +397,7 @@ pub fn precedence(token: &Token) -> u8 {
         Token::AmpersandAmpersand => 10,
         Token::PipePipe => 5,
         Token::Colon => 3,
+        Token::QuestionMark => 2,
         Token::Equal => 1,
         _ => 0,
     }
