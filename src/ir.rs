@@ -66,7 +66,12 @@ impl IntoInstructions for parser::Function {
             })
             .flatten()
             .collect::<Vec<_>>();
-        if instructions.is_empty() {
+        // if no return is found
+        if let Some(last) = instructions.last() {
+            if !matches!(last, Instruction::Return(_)) {
+                instructions.push(Instruction::Return(Val::Constant(0)));
+            }
+        } else {
             instructions.push(Instruction::Return(Val::Constant(0)));
         }
         instructions
