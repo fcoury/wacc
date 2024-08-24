@@ -32,9 +32,9 @@ impl Analysis {
                 BlockItem::Declaration(declaration) => {
                     block_items.push(self.resolve_declaration(&mut context, declaration)?)
                 }
-                BlockItem::Statement(statement) => {
-                    block_items.push(self.resolve_statement(&mut context, statement)?)
-                }
+                BlockItem::Statement(statement) => block_items.push(BlockItem::Statement(
+                    self.resolve_statement(&mut context, statement)?,
+                )),
             }
         }
 
@@ -46,24 +46,23 @@ impl Analysis {
         &mut self,
         context: &mut Context,
         statement: &Statement,
-    ) -> anyhow::Result<BlockItem> {
+    ) -> anyhow::Result<Statement> {
         let statement = match statement {
             Statement::Return(expr) => Statement::Return(self.resolve_exp(context, expr)?),
             Statement::Expression(expr) => Statement::Expression(self.resolve_exp(context, expr)?),
             Statement::Null => Statement::Null,
             Statement::If(cond, then, else_) => {
-                // let cond = self.resolve_exp(context, cond)?;
-                // let then = self.resolve_statement(context, then)?;
-                // let else_ = match else_ {
-                //     Some(else_) => Some(Box::new(self.resolve_statement(context, else_)?)),
-                //     None => None,
-                // };
-                // Statement::If(cond, Box::new(then), else_)
-                todo!()
+                let cond = self.resolve_exp(context, cond)?;
+                let then = self.resolve_statement(context, then)?;
+                let else_ = match else_ {
+                    Some(else_) => Some(Box::new(self.resolve_statement(context, else_)?)),
+                    None => None,
+                };
+                Statement::If(cond, Box::new(then), else_)
             }
         };
 
-        Ok(BlockItem::Statement(statement))
+        Ok(statement)
     }
 
     fn resolve_exp(&mut self, context: &mut Context, exp: &Exp) -> anyhow::Result<Exp> {
@@ -98,19 +97,18 @@ impl Analysis {
                 Ok(Exp::BinaryOperation(*op, Box::new(left), Box::new(right)))
             }
             Exp::Conditional(cond, then, else_) => {
-                // let cond = self.resolve_exp(context, cond.as_ref())?;
-                // let then = self.resolve_exp(context, then.as_ref())?;
-                // let else_ = self.resolve_exp(context, else_.as_ref())?;
-                // Ok(Exp::Conditional(
-                //     Box::new(cond),
-                //     Box::new(then),
-                //     Box::new(else_),
-                // ))
-                todo!()
+                let cond = self.resolve_exp(context, cond.as_ref())?;
+                let then = self.resolve_exp(context, then.as_ref())?;
+                let else_ = self.resolve_exp(context, else_.as_ref())?;
+
+                Ok(Exp::Conditional(
+                    Box::new(cond),
+                    Box::new(then),
+                    Box::new(else_),
+                ))
             }
         }
     }
-
     // fn resolve_factor(&mut self, context: &mut Context, factor: &Factor) -> anyhow::Result<Factor> {
     //     match factor {
     //         Exp::Constant(_) => Ok(factor.clone()),
