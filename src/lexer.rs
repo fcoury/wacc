@@ -9,6 +9,8 @@ pub enum Token {
     IntKeyword,
     Void,
     Return,
+    If,
+    Else,
 
     // then operators
     AmpersandAmpersand,
@@ -33,6 +35,8 @@ pub enum Token {
     Less,
     Greater,
     Equal,
+    QuestionMark,
+    Colon,
 
     // then single character tokens
     OpenParen,
@@ -57,6 +61,8 @@ impl Token {
             Token::IntKeyword => Some(Regex::new(r"^int\b").unwrap()),
             Token::Void => Some(Regex::new(r"^void\b").unwrap()),
             Token::Return => Some(Regex::new(r"^return\b").unwrap()),
+            Token::If => Some(Regex::new(r"^if\b").unwrap()),
+            Token::Else => Some(Regex::new(r"^else\b").unwrap()),
             Token::AmpersandAmpersand => Some(Regex::new(r"^\&\&").unwrap()),
             Token::PipePipe => Some(Regex::new(r"^\|\|").unwrap()),
             Token::EqualEqual => Some(Regex::new(r"^==").unwrap()),
@@ -84,6 +90,8 @@ impl Token {
             Token::Less => Some(Regex::new(r"^<").unwrap()),
             Token::Greater => Some(Regex::new(r"^>").unwrap()),
             Token::Equal => Some(Regex::new(r"^=").unwrap()),
+            Token::QuestionMark => Some(Regex::new(r"^\?").unwrap()),
+            Token::Colon => Some(Regex::new(r"^:").unwrap()),
             _ => None,
         }
     }

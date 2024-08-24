@@ -93,6 +93,25 @@ impl IntoInstructions for parser::Statement {
                 instructions
             }
             parser::Statement::Null => vec![],
+            parser::Statement::If(cond, then, else_) => {
+                // let mut instructions = vec![];
+                // let cond = emit_ir(*cond, &mut instructions, context);
+                // let end_label = context.next_var();
+                // let else_label = context.next_var();
+                //
+                // instructions.push(Instruction::JumpIfZero(cond.clone(), else_label.clone()));
+                // let then_instructions = then.into_instructions(context);
+                // instructions.extend(then_instructions);
+                // instructions.push(Instruction::Jump(end_label.clone()));
+                // instructions.push(Instruction::Label(else_label.clone()));
+                // if let Some(else_) = else_ {
+                //     let else_instructions = else_.into_instructions(context);
+                //     instructions.extend(else_instructions);
+                // }
+                // instructions.push(Instruction::Label(end_label.clone()));
+                // instructions
+                todo!()
+            }
         }
     }
 }
@@ -239,6 +258,7 @@ pub fn emit_ir(
                 dst
             }
         },
+        parser::Exp::Conditional(_, _, _) => todo!(),
     }
 }
 

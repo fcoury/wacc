@@ -51,6 +51,16 @@ impl Analysis {
             Statement::Return(expr) => Statement::Return(self.resolve_exp(context, expr)?),
             Statement::Expression(expr) => Statement::Expression(self.resolve_exp(context, expr)?),
             Statement::Null => Statement::Null,
+            Statement::If(cond, then, else_) => {
+                // let cond = self.resolve_exp(context, cond)?;
+                // let then = self.resolve_statement(context, then)?;
+                // let else_ = match else_ {
+                //     Some(else_) => Some(Box::new(self.resolve_statement(context, else_)?)),
+                //     None => None,
+                // };
+                // Statement::If(cond, Box::new(then), else_)
+                todo!()
+            }
         };
 
         Ok(BlockItem::Statement(statement))
@@ -86,6 +96,17 @@ impl Analysis {
                 let left = self.resolve_exp(context, left.as_ref())?;
                 let right = self.resolve_exp(context, right.as_ref())?;
                 Ok(Exp::BinaryOperation(*op, Box::new(left), Box::new(right)))
+            }
+            Exp::Conditional(cond, then, else_) => {
+                // let cond = self.resolve_exp(context, cond.as_ref())?;
+                // let then = self.resolve_exp(context, then.as_ref())?;
+                // let else_ = self.resolve_exp(context, else_.as_ref())?;
+                // Ok(Exp::Conditional(
+                //     Box::new(cond),
+                //     Box::new(then),
+                //     Box::new(else_),
+                // ))
+                todo!()
             }
         }
     }

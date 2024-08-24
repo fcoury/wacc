@@ -31,6 +31,7 @@ pub enum BlockItem {
 pub enum Statement {
     Return(Exp),
     Expression(Exp),
+    If(Exp, Box<Statement>, Option<Box<Statement>>),
     Null,
 }
 
@@ -47,6 +48,7 @@ pub enum Exp {
     Assignment(Box<Exp>, Box<Exp>),
     Unary(UnaryOperator, Box<Exp>),
     BinaryOperation(BinaryOperator, Box<Exp>, Box<Exp>),
+    Conditional(Box<Exp>, Box<Exp>, Box<Exp>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -177,6 +179,20 @@ impl Parser<'_> {
         } else if self.peek() == Some(Token::Semicolon) {
             self.take_token(); // skips Semicolon
             Ok(Statement::Null)
+        } else if self.peek() == Some(Token::If) {
+            self.take_token(); // skips If
+            self.expect(Token::OpenParen)?;
+            let condition = self.parse_exp(None)?;
+            self.expect(Token::CloseParen)?;
+            let then_statement = Box::new(self.parse_statement()?);
+            let else_statement = if self.peek() == Some(Token::Else) {
+                self.take_token(); // skips Else
+                Some(Box::new(self.parse_statement()?))
+            } else {
+                None
+            };
+
+            Ok(Statement::If(condition, then_statement, else_statement))
         } else {
             let exp = self.parse_exp(None)?;
             self.expect(Token::Semicolon)?;
@@ -227,6 +243,12 @@ impl Parser<'_> {
                 self.take_token();
                 let right = self.parse_exp(Some(precedence(&next_token)))?;
                 left = Exp::Assignment(Box::new(left), Box::new(right));
+            } else if next_token == Token::QuestionMark {
+                self.take_token();
+                let true_exp = self.parse_exp(None)?;
+                self.expect(Token::Colon)?;
+                let false_exp = self.parse_exp(Some(precedence(&next_token)))?;
+                left = Exp::Conditional(Box::new(left), Box::new(true_exp), Box::new(false_exp));
             } else {
                 let Some(operator) = self.parse_binary_operator()? else {
                     break;
@@ -373,7 +395,8 @@ pub fn precedence(token: &Token) -> u8 {
         Token::Pipe => 20,
         Token::AmpersandAmpersand => 10,
         Token::PipePipe => 5,
-        Token::Equal => 0,
+        Token::Colon => 3,
+        Token::Equal => 1,
         _ => 0,
     }
 }
