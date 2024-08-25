@@ -78,6 +78,14 @@ impl IntoInstructions for parser::Function {
     }
 }
 
+impl IntoInstructions for parser::Exp {
+    fn into_instructions(self, context: &mut Context) -> Vec<Instruction> {
+        let mut instructions = vec![];
+        emit_ir(self, &mut instructions, context);
+        instructions
+    }
+}
+
 impl IntoInstructions for parser::Statement {
     fn into_instructions(self, context: &mut Context) -> Vec<Instruction> {
         match self {
@@ -94,23 +102,22 @@ impl IntoInstructions for parser::Statement {
             }
             parser::Statement::Null => vec![],
             parser::Statement::If(cond, then, else_) => {
-                // let mut instructions = vec![];
-                // let cond = emit_ir(*cond, &mut instructions, context);
-                // let end_label = context.next_var();
-                // let else_label = context.next_var();
-                //
-                // instructions.push(Instruction::JumpIfZero(cond.clone(), else_label.clone()));
-                // let then_instructions = then.into_instructions(context);
-                // instructions.extend(then_instructions);
-                // instructions.push(Instruction::Jump(end_label.clone()));
-                // instructions.push(Instruction::Label(else_label.clone()));
-                // if let Some(else_) = else_ {
-                //     let else_instructions = else_.into_instructions(context);
-                //     instructions.extend(else_instructions);
-                // }
-                // instructions.push(Instruction::Label(end_label.clone()));
-                // instructions
-                todo!()
+                let mut instructions = vec![];
+                let cond = emit_ir(cond, &mut instructions, context);
+                let end_label = context.next_label("end");
+                let else_label = context.next_label("else");
+
+                instructions.push(Instruction::JumpIfZero(cond.clone(), else_label.clone()));
+                let then_instructions = then.into_instructions(context);
+                instructions.extend(then_instructions);
+                instructions.push(Instruction::Jump(end_label.clone()));
+                instructions.push(Instruction::Label(else_label.clone()));
+                if let Some(else_) = else_ {
+                    let else_instructions = else_.into_instructions(context);
+                    instructions.extend(else_instructions);
+                }
+                instructions.push(Instruction::Label(end_label.clone()));
+                instructions
             }
         }
     }
@@ -165,8 +172,8 @@ pub fn emit_ir(
         }
         parser::Exp::BinaryOperation(oper, v1, v2) => match oper {
             parser::BinaryOperator::Or => {
-                let short_circuit_label = context.next_var();
-                let end_label = context.next_var();
+                let short_circuit_label = context.next_label("short_circuit");
+                let end_label = context.next_label("end");
                 let result = context.next_var();
 
                 // Evaluate first operand
@@ -208,8 +215,8 @@ pub fn emit_ir(
                 Val::Var(result)
             }
             parser::BinaryOperator::And => {
-                let short_circuit_label = context.next_var();
-                let end_label = context.next_var();
+                let short_circuit_label = context.next_label("short_circuit");
+                let end_label = context.next_label("end");
                 let result = context.next_var();
 
                 // Evaluate first operand
@@ -258,7 +265,44 @@ pub fn emit_ir(
                 dst
             }
         },
-        parser::Exp::Conditional(_, _, _) => todo!(),
+        parser::Exp::Conditional(cond, e1, e2) => {
+            // Emit instructions for condition
+            let c = emit_ir(*cond, instructions, context);
+
+            // Create labels
+            let e2_label = context.next_label("else");
+            let end_label = context.next_label("end");
+
+            // Create result variable
+            let result = context.next_var();
+
+            // Jump to e2 if condition is zero
+            instructions.push(Instruction::JumpIfZero(c, e2_label.clone()));
+
+            // Emit instructions for e1
+            let v1 = emit_ir(*e1, instructions, context);
+
+            // Assign result of e1 to result
+            instructions.push(Instruction::Copy(v1, Val::Var(result.clone())));
+
+            // Jump to end
+            instructions.push(Instruction::Jump(end_label.clone()));
+
+            // Label for e2
+            instructions.push(Instruction::Label(e2_label));
+
+            // Emit instructions for e2
+            let v2 = emit_ir(*e2, instructions, context);
+
+            // Assign result of e2 to result
+            instructions.push(Instruction::Copy(v2, Val::Var(result.clone())));
+
+            // End label
+            instructions.push(Instruction::Label(end_label));
+
+            // Return result
+            Val::Var(result)
+        }
     }
 }
 
@@ -354,6 +398,11 @@ impl Context {
     pub fn next_var(&self) -> Identifier {
         let id = self.next_temp.fetch_add(1, Ordering::SeqCst);
         format!("tmp.{}", id)
+    }
+
+    pub fn next_label(&self, descr: &str) -> Identifier {
+        let id = self.next_temp.fetch_add(1, Ordering::SeqCst);
+        format!("{descr}.label.{}", id)
     }
 }
 

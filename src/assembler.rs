@@ -430,8 +430,8 @@ impl Assembler {
                     (op, src1, src2) => vec![Instruction::Binary(*op, src1, src2)],
                 },
                 Instruction::Cmp(Operand::Stack(op1), Operand::Stack(op2)) => vec![
-                    Instruction::Mov(Operand::Stack(op2), Operand::Reg(Reg::R10)),
-                    Instruction::Cmp(Operand::Reg(Reg::R10), Operand::Stack(op1)),
+                    Instruction::Mov(Operand::Stack(op1), Operand::Reg(Reg::R10)),
+                    Instruction::Cmp(Operand::Reg(Reg::R10), Operand::Stack(op2)),
                 ],
                 Instruction::Cmp(op1, Operand::Imm(op2)) => vec![
                     Instruction::Mov(Operand::Imm(op2), Operand::Reg(Reg::R11)),
