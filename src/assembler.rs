@@ -263,6 +263,11 @@ impl Display for Instruction {
             Instruction::Jmp(target) => write!(f, "\tjmp\t.L{}", target),
             Instruction::JmpCC(condition, target) => write!(f, "\tj{}\t.L{}", condition, target),
             Instruction::SetCC(condition, operand) => {
+                // TODO: implement this logic
+                // if let Operand::Reg(reg) = operand {
+                //     let reg = get_1byte_reg(reg);
+                //     return write!(f, "\tset{}\t{}", condition, reg);
+                // }
                 write!(f, "\tset{}\t{}", condition, operand)
             }
             Instruction::Label(label) => write!(f, ".L{}:", label),
