@@ -2,9 +2,15 @@ use regex::Regex;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
+#[derive(Debug)]
+pub struct Token<'a> {
+    pub kind: TokenKind,
+    pub origin: &'a str,
+}
+
 #[derive(EnumIter, Debug, PartialEq, Clone)]
 #[allow(unused)]
-pub enum Token {
+pub enum TokenKind {
     // keywords come first
     IntKeyword,
     Void,
@@ -53,45 +59,45 @@ pub enum Token {
     Eof,
 }
 
-impl Token {
+impl TokenKind {
     fn regex(&self) -> Option<Regex> {
         match self {
-            Token::Identifier(_) => Some(Regex::new(r"^[a-zA-Z_]\w*\b").unwrap()),
-            Token::Int(_) => Some(Regex::new(r"^[0-9]+\b").unwrap()),
-            Token::IntKeyword => Some(Regex::new(r"^int\b").unwrap()),
-            Token::Void => Some(Regex::new(r"^void\b").unwrap()),
-            Token::Return => Some(Regex::new(r"^return\b").unwrap()),
-            Token::If => Some(Regex::new(r"^if\b").unwrap()),
-            Token::Else => Some(Regex::new(r"^else\b").unwrap()),
-            Token::AmpersandAmpersand => Some(Regex::new(r"^\&\&").unwrap()),
-            Token::PipePipe => Some(Regex::new(r"^\|\|").unwrap()),
-            Token::EqualEqual => Some(Regex::new(r"^==").unwrap()),
-            Token::ExclamationEqual => Some(Regex::new(r"^!=").unwrap()),
-            Token::LessEqual => Some(Regex::new(r"^<=").unwrap()),
-            Token::GreaterEqual => Some(Regex::new(r"^>=").unwrap()),
-            Token::TwoHyphens => Some(Regex::new(r"^\-\-").unwrap()),
-            Token::LessLess => Some(Regex::new(r"^<<").unwrap()),
-            Token::GreaterGreater => Some(Regex::new(r"^>>").unwrap()),
-            Token::Tilde => Some(Regex::new(r"^\~").unwrap()),
-            Token::Hyphen => Some(Regex::new(r"^\-").unwrap()),
-            Token::Plus => Some(Regex::new(r"^\+").unwrap()),
-            Token::Asterisk => Some(Regex::new(r"^\*").unwrap()),
-            Token::Slash => Some(Regex::new(r"^/").unwrap()),
-            Token::Percent => Some(Regex::new(r"^%").unwrap()),
-            Token::OpenParen => Some(Regex::new(r"^\(").unwrap()),
-            Token::CloseParen => Some(Regex::new(r"^\)").unwrap()),
-            Token::OpenBrace => Some(Regex::new(r"^\{").unwrap()),
-            Token::CloseBrace => Some(Regex::new(r"^\}").unwrap()),
-            Token::Semicolon => Some(Regex::new(r"^;").unwrap()),
-            Token::Ampersand => Some(Regex::new(r"^&").unwrap()),
-            Token::Pipe => Some(Regex::new(r"^\|").unwrap()),
-            Token::Caret => Some(Regex::new(r"^\^").unwrap()),
-            Token::Exclamation => Some(Regex::new(r"^!").unwrap()),
-            Token::Less => Some(Regex::new(r"^<").unwrap()),
-            Token::Greater => Some(Regex::new(r"^>").unwrap()),
-            Token::Equal => Some(Regex::new(r"^=").unwrap()),
-            Token::QuestionMark => Some(Regex::new(r"^\?").unwrap()),
-            Token::Colon => Some(Regex::new(r"^:").unwrap()),
+            TokenKind::Identifier(_) => Some(Regex::new(r"^[a-zA-Z_]\w*\b").unwrap()),
+            TokenKind::Int(_) => Some(Regex::new(r"^[0-9]+\b").unwrap()),
+            TokenKind::IntKeyword => Some(Regex::new(r"^int\b").unwrap()),
+            TokenKind::Void => Some(Regex::new(r"^void\b").unwrap()),
+            TokenKind::Return => Some(Regex::new(r"^return\b").unwrap()),
+            TokenKind::If => Some(Regex::new(r"^if\b").unwrap()),
+            TokenKind::Else => Some(Regex::new(r"^else\b").unwrap()),
+            TokenKind::AmpersandAmpersand => Some(Regex::new(r"^\&\&").unwrap()),
+            TokenKind::PipePipe => Some(Regex::new(r"^\|\|").unwrap()),
+            TokenKind::EqualEqual => Some(Regex::new(r"^==").unwrap()),
+            TokenKind::ExclamationEqual => Some(Regex::new(r"^!=").unwrap()),
+            TokenKind::LessEqual => Some(Regex::new(r"^<=").unwrap()),
+            TokenKind::GreaterEqual => Some(Regex::new(r"^>=").unwrap()),
+            TokenKind::TwoHyphens => Some(Regex::new(r"^\-\-").unwrap()),
+            TokenKind::LessLess => Some(Regex::new(r"^<<").unwrap()),
+            TokenKind::GreaterGreater => Some(Regex::new(r"^>>").unwrap()),
+            TokenKind::Tilde => Some(Regex::new(r"^\~").unwrap()),
+            TokenKind::Hyphen => Some(Regex::new(r"^\-").unwrap()),
+            TokenKind::Plus => Some(Regex::new(r"^\+").unwrap()),
+            TokenKind::Asterisk => Some(Regex::new(r"^\*").unwrap()),
+            TokenKind::Slash => Some(Regex::new(r"^/").unwrap()),
+            TokenKind::Percent => Some(Regex::new(r"^%").unwrap()),
+            TokenKind::OpenParen => Some(Regex::new(r"^\(").unwrap()),
+            TokenKind::CloseParen => Some(Regex::new(r"^\)").unwrap()),
+            TokenKind::OpenBrace => Some(Regex::new(r"^\{").unwrap()),
+            TokenKind::CloseBrace => Some(Regex::new(r"^\}").unwrap()),
+            TokenKind::Semicolon => Some(Regex::new(r"^;").unwrap()),
+            TokenKind::Ampersand => Some(Regex::new(r"^&").unwrap()),
+            TokenKind::Pipe => Some(Regex::new(r"^\|").unwrap()),
+            TokenKind::Caret => Some(Regex::new(r"^\^").unwrap()),
+            TokenKind::Exclamation => Some(Regex::new(r"^!").unwrap()),
+            TokenKind::Less => Some(Regex::new(r"^<").unwrap()),
+            TokenKind::Greater => Some(Regex::new(r"^>").unwrap()),
+            TokenKind::Equal => Some(Regex::new(r"^=").unwrap()),
+            TokenKind::QuestionMark => Some(Regex::new(r"^\?").unwrap()),
+            TokenKind::Colon => Some(Regex::new(r"^:").unwrap()),
             _ => None,
         }
     }
@@ -116,7 +122,7 @@ impl<'a> Lexer<'a> {
             }
 
             let mut matched = false;
-            for typ in Token::iter() {
+            for typ in TokenKind::iter() {
                 let regex = typ.regex();
                 if let Some(regex) = regex {
                     if let Some(mat) = regex.find(&self.input[self.pos..]) {
@@ -125,13 +131,18 @@ impl<'a> Lexer<'a> {
                         // println!("token_str: {token_str}");
                         // println!("rest: {:?}\n", &self.input[self.pos..]);
 
-                        let token = match typ {
-                            Token::Identifier(_) => Token::Identifier(token_str.to_string()),
-                            Token::Int(_) => Token::Int(token_str.parse().unwrap()),
+                        let kind = match typ {
+                            TokenKind::Identifier(_) => {
+                                TokenKind::Identifier(token_str.to_string())
+                            }
+                            TokenKind::Int(_) => TokenKind::Int(token_str.parse().unwrap()),
                             typ => typ,
                         };
                         // println!("Token: {} => {:?}", token_str, token);
-                        tokens.push(token);
+                        tokens.push(Token {
+                            kind,
+                            origin: token_str,
+                        });
                         matched = true;
                         break;
                     }
@@ -147,7 +158,10 @@ impl<'a> Lexer<'a> {
             }
         }
 
-        tokens.push(Token::Eof);
+        tokens.push(Token {
+            kind: TokenKind::Eof,
+            origin: "",
+        });
 
         Ok(tokens)
     }

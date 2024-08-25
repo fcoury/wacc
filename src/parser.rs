@@ -2,7 +2,7 @@
 use strum::EnumProperty;
 use strum_macros::EnumProperty;
 
-use crate::lexer::Token;
+use crate::lexer::{Token, TokenKind};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
@@ -105,11 +105,11 @@ impl BinaryOperator {
 }
 
 pub struct Parser<'a> {
-    tokens: &'a [Token],
+    tokens: &'a [Token<'a>],
 }
 
-impl Parser<'_> {
-    pub fn new(tokens: &[Token]) -> Parser<'_> {
+impl<'a> Parser<'a> {
+    pub fn new(tokens: &'a [Token<'a>]) -> Parser<'a> {
         Parser { tokens }
     }
 
@@ -122,39 +122,39 @@ impl Parser<'_> {
         let program = Program {
             function_definition: function,
         };
-        self.expect(Token::Eof)?;
+        self.expect(TokenKind::Eof)?;
         Ok(program)
     }
 
     pub fn parse_function(&mut self) -> anyhow::Result<Function> {
-        self.expect(Token::IntKeyword)?;
+        self.expect(TokenKind::IntKeyword)?;
         let name = self.parse_identifier()?;
-        self.expect(Token::OpenParen)?;
-        self.expect(Token::Void)?;
-        self.expect(Token::CloseParen)?;
-        self.expect(Token::OpenBrace)?;
+        self.expect(TokenKind::OpenParen)?;
+        self.expect(TokenKind::Void)?;
+        self.expect(TokenKind::CloseParen)?;
+        self.expect(TokenKind::OpenBrace)?;
 
         let mut body = vec![];
-        while self.peek() != Some(Token::CloseBrace) {
+        while self.peek() != Some(TokenKind::CloseBrace) {
             let next_block_item = self.parse_block_item()?;
             body.push(next_block_item);
         }
 
-        self.expect(Token::CloseBrace)?;
+        self.expect(TokenKind::CloseBrace)?;
 
         Ok(Function { name, body })
     }
     pub fn parse_block_item(&mut self) -> anyhow::Result<BlockItem> {
-        if self.peek() == Some(Token::IntKeyword) {
+        if self.peek() == Some(TokenKind::IntKeyword) {
             self.take_token();
             let name = self.parse_identifier()?;
-            let init = if self.peek() == Some(Token::Equal) {
+            let init = if self.peek() == Some(TokenKind::Equal) {
                 self.take_token();
                 Some(self.parse_exp(None)?)
             } else {
                 None
             };
-            self.expect(Token::Semicolon)?;
+            self.expect(TokenKind::Semicolon)?;
             Ok(BlockItem::Declaration(Declaration { name, init }))
         } else {
             Ok(BlockItem::Statement(self.parse_statement()?))
@@ -162,7 +162,7 @@ impl Parser<'_> {
     }
 
     pub fn parse_identifier(&mut self) -> anyhow::Result<String> {
-        if let Token::Identifier(name) = &self.tokens[0] {
+        if let TokenKind::Identifier(name) = &self.tokens[0].kind {
             self.tokens = &self.tokens[1..];
             Ok(name.to_string())
         } else {
@@ -171,21 +171,21 @@ impl Parser<'_> {
     }
 
     pub fn parse_statement(&mut self) -> anyhow::Result<Statement> {
-        if self.peek() == Some(Token::Return) {
+        if self.peek() == Some(TokenKind::Return) {
             self.take_token(); // skips Return
             let return_val = self.parse_exp(None)?;
-            self.expect(Token::Semicolon)?;
+            self.expect(TokenKind::Semicolon)?;
             Ok(Statement::Return(return_val))
-        } else if self.peek() == Some(Token::Semicolon) {
+        } else if self.peek() == Some(TokenKind::Semicolon) {
             self.take_token(); // skips Semicolon
             Ok(Statement::Null)
-        } else if self.peek() == Some(Token::If) {
+        } else if self.peek() == Some(TokenKind::If) {
             self.take_token(); // skips If
-            self.expect(Token::OpenParen)?;
+            self.expect(TokenKind::OpenParen)?;
             let condition = self.parse_exp(None)?;
-            self.expect(Token::CloseParen)?;
+            self.expect(TokenKind::CloseParen)?;
             let then_statement = Box::new(self.parse_statement()?);
-            let else_statement = if self.peek() == Some(Token::Else) {
+            let else_statement = if self.peek() == Some(TokenKind::Else) {
                 self.take_token(); // skips Else
                 Some(Box::new(self.parse_statement()?))
             } else {
@@ -195,35 +195,35 @@ impl Parser<'_> {
             Ok(Statement::If(condition, then_statement, else_statement))
         } else {
             let exp = self.parse_exp(None)?;
-            self.expect(Token::Semicolon)?;
+            self.expect(TokenKind::Semicolon)?;
             Ok(Statement::Expression(exp))
         }
     }
 
     pub fn parse_factor(&mut self) -> anyhow::Result<Exp> {
         let next_token = self.peek();
-        if let Token::Int(val) = self.tokens[0] {
+        if let TokenKind::Int(val) = self.tokens[0].kind {
             self.tokens = &self.tokens[1..];
             Ok(Exp::Constant(val))
-        } else if next_token == Some(Token::Tilde)
-            || next_token == Some(Token::Hyphen)
-            || next_token == Some(Token::Exclamation)
+        } else if next_token == Some(TokenKind::Tilde)
+            || next_token == Some(TokenKind::Hyphen)
+            || next_token == Some(TokenKind::Exclamation)
         {
             let operator = self.parse_unary_operator()?;
             let inner_exp = Box::new(self.parse_factor()?);
             Ok(Exp::Unary(operator, inner_exp))
-        } else if next_token == Some(Token::OpenParen) {
+        } else if next_token == Some(TokenKind::OpenParen) {
             self.take_token(); // skips OpenParen
             let exp = self.parse_exp(None)?;
-            self.expect(Token::CloseParen)?;
+            self.expect(TokenKind::CloseParen)?;
             Ok(exp)
-        } else if let Token::Identifier(name) = &self.tokens[0] {
+        } else if let TokenKind::Identifier(name) = &self.tokens[0].kind {
             self.tokens = &self.tokens[1..];
             Ok(Exp::Var(name.to_string()))
         } else {
             anyhow::bail!(
-                "Expected constant or unary operator, found {:?}",
-                self.tokens[0]
+                "Expected constant or unary operator, found {}",
+                self.tokens[0].origin
             );
         }
     }
@@ -240,14 +240,14 @@ impl Parser<'_> {
                 break;
             }
 
-            if next_token == Token::Equal {
+            if next_token == TokenKind::Equal {
                 self.take_token();
                 let right = self.parse_exp(Some(precedence(&next_token)))?;
                 left = Exp::Assignment(Box::new(left), Box::new(right));
-            } else if next_token == Token::QuestionMark {
+            } else if next_token == TokenKind::QuestionMark {
                 self.take_token();
                 let true_exp = self.parse_exp(None)?;
-                self.expect(Token::Colon)?;
+                self.expect(TokenKind::Colon)?;
                 let false_exp = self.parse_exp(Some(precedence(&next_token)))?;
                 left = Exp::Conditional(Box::new(left), Box::new(true_exp), Box::new(false_exp));
             } else {
@@ -269,75 +269,75 @@ impl Parser<'_> {
         };
 
         match next_token {
-            Token::Plus => {
+            TokenKind::Plus => {
                 self.take_token();
                 Ok(Some(BinaryOperator::Add))
             }
-            Token::Hyphen => {
+            TokenKind::Hyphen => {
                 self.take_token();
                 Ok(Some(BinaryOperator::Subtract))
             }
-            Token::Asterisk => {
+            TokenKind::Asterisk => {
                 self.take_token();
                 Ok(Some(BinaryOperator::Multiply))
             }
-            Token::Slash => {
+            TokenKind::Slash => {
                 self.take_token();
                 Ok(Some(BinaryOperator::Divide))
             }
-            Token::Percent => {
+            TokenKind::Percent => {
                 self.take_token();
                 Ok(Some(BinaryOperator::Remainder))
             }
-            Token::Ampersand => {
+            TokenKind::Ampersand => {
                 self.take_token();
                 Ok(Some(BinaryOperator::BitwiseAnd))
             }
-            Token::Pipe => {
+            TokenKind::Pipe => {
                 self.take_token();
                 Ok(Some(BinaryOperator::BitwiseOr))
             }
-            Token::Caret => {
+            TokenKind::Caret => {
                 self.take_token();
                 Ok(Some(BinaryOperator::BitwiseXor))
             }
-            Token::LessLess => {
+            TokenKind::LessLess => {
                 self.take_token();
                 Ok(Some(BinaryOperator::ShiftLeft))
             }
-            Token::GreaterGreater => {
+            TokenKind::GreaterGreater => {
                 self.take_token();
                 Ok(Some(BinaryOperator::ShiftRight))
             }
-            Token::AmpersandAmpersand => {
+            TokenKind::AmpersandAmpersand => {
                 self.take_token();
                 Ok(Some(BinaryOperator::And))
             }
-            Token::PipePipe => {
+            TokenKind::PipePipe => {
                 self.take_token();
                 Ok(Some(BinaryOperator::Or))
             }
-            Token::EqualEqual => {
+            TokenKind::EqualEqual => {
                 self.take_token();
                 Ok(Some(BinaryOperator::Equal))
             }
-            Token::ExclamationEqual => {
+            TokenKind::ExclamationEqual => {
                 self.take_token();
                 Ok(Some(BinaryOperator::NotEqual))
             }
-            Token::Less => {
+            TokenKind::Less => {
                 self.take_token();
                 Ok(Some(BinaryOperator::LessThan))
             }
-            Token::LessEqual => {
+            TokenKind::LessEqual => {
                 self.take_token();
                 Ok(Some(BinaryOperator::LessOrEqual))
             }
-            Token::Greater => {
+            TokenKind::Greater => {
                 self.take_token();
                 Ok(Some(BinaryOperator::GraterThan))
             }
-            Token::GreaterEqual => {
+            TokenKind::GreaterEqual => {
                 self.take_token();
                 Ok(Some(BinaryOperator::GreaterOrEqual))
             }
@@ -346,29 +346,29 @@ impl Parser<'_> {
     }
 
     pub fn parse_unary_operator(&mut self) -> anyhow::Result<UnaryOperator> {
-        match self.tokens[0] {
-            Token::Tilde => {
+        match self.tokens[0].kind {
+            TokenKind::Tilde => {
                 self.tokens = &self.tokens[1..];
                 Ok(UnaryOperator::Complement)
             }
-            Token::Hyphen => {
+            TokenKind::Hyphen => {
                 self.tokens = &self.tokens[1..];
                 Ok(UnaryOperator::Negate)
             }
-            Token::Exclamation => {
+            TokenKind::Exclamation => {
                 self.tokens = &self.tokens[1..];
                 Ok(UnaryOperator::Not)
             }
-            _ => anyhow::bail!("Expected unary operator, found {:?}", self.tokens[0]),
+            _ => anyhow::bail!("Expected unary operator, found {}", self.tokens[0].origin),
         }
     }
 
-    pub fn expect(&mut self, expected: Token) -> anyhow::Result<()> {
+    pub fn expect(&mut self, expected: TokenKind) -> anyhow::Result<()> {
         if self.tokens.is_empty() {
             anyhow::bail!("Unexpected end of input");
         }
 
-        if self.tokens[0] == expected {
+        if self.tokens[0].kind == expected {
             self.tokens = &self.tokens[1..];
             Ok(())
         } else {
@@ -376,8 +376,8 @@ impl Parser<'_> {
         }
     }
 
-    fn peek(&self) -> Option<Token> {
-        self.tokens.get(0).cloned()
+    fn peek(&self) -> Option<TokenKind> {
+        self.tokens.get(0).map(|t| t.kind.clone())
     }
 
     fn take_token(&mut self) {
@@ -385,20 +385,20 @@ impl Parser<'_> {
     }
 }
 
-pub fn precedence(token: &Token) -> u8 {
+pub fn precedence(token: &TokenKind) -> u8 {
     match token {
-        Token::Asterisk | Token::Slash | Token::Percent => 50,
-        Token::Plus | Token::Hyphen => 45,
-        Token::Less | Token::LessEqual | Token::Greater | Token::GreaterEqual => 35,
-        Token::EqualEqual | Token::ExclamationEqual => 30,
-        Token::Ampersand => 30,
-        Token::Caret => 25,
-        Token::Pipe => 20,
-        Token::AmpersandAmpersand => 10,
-        Token::PipePipe => 5,
-        Token::Colon => 3,
-        Token::QuestionMark => 2,
-        Token::Equal => 1,
+        TokenKind::Asterisk | TokenKind::Slash | TokenKind::Percent => 50,
+        TokenKind::Plus | TokenKind::Hyphen => 45,
+        TokenKind::Less | TokenKind::LessEqual | TokenKind::Greater | TokenKind::GreaterEqual => 35,
+        TokenKind::EqualEqual | TokenKind::ExclamationEqual => 30,
+        TokenKind::Ampersand => 30,
+        TokenKind::Caret => 25,
+        TokenKind::Pipe => 20,
+        TokenKind::AmpersandAmpersand => 10,
+        TokenKind::PipePipe => 5,
+        TokenKind::Colon => 3,
+        TokenKind::QuestionMark => 2,
+        TokenKind::Equal => 1,
         _ => 0,
     }
 }
@@ -411,7 +411,8 @@ mod tests {
     #[test]
     fn test_parse_exp() {
         let input = "1 * 2 - 3 * (4 + 5)";
-        let tokens = Lexer::new(input).run().unwrap();
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.run().unwrap();
         let mut parser = Parser::new(&tokens);
         let exp = parser.parse_exp(None).unwrap();
 
