@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::atomic::AtomicI32};
 
-use crate::parser::{BlockItem, Declaration, Exp, Program, Statement};
+use crate::parser::{Block, BlockItem, Declaration, Exp, Program, Statement};
 
 pub struct Analysis {
     program: crate::parser::Program,
@@ -22,23 +22,23 @@ impl Analysis {
 
     fn resolve_program(&mut self) -> anyhow::Result<Program> {
         let mut program = self.program.clone();
-        let items = program.function_definition.body;
+        let body = program.function_definition.body;
 
         let mut context = Context::new();
 
-        let mut block_items = Vec::with_capacity(items.len());
-        for block_item in items.iter() {
+        let mut items = Vec::with_capacity(body.len());
+        for block_item in body.iter() {
             match block_item {
                 BlockItem::Declaration(declaration) => {
-                    block_items.push(self.resolve_declaration(&mut context, declaration)?)
+                    items.push(self.resolve_declaration(&mut context, declaration)?)
                 }
-                BlockItem::Statement(statement) => block_items.push(BlockItem::Statement(
+                BlockItem::Statement(statement) => items.push(BlockItem::Statement(
                     self.resolve_statement(&mut context, statement)?,
                 )),
             }
         }
 
-        program.function_definition.body = block_items;
+        program.function_definition.body = Block { items };
         Ok(program)
     }
 
@@ -60,6 +60,7 @@ impl Analysis {
                 };
                 Statement::If(cond, Box::new(then), else_)
             }
+            Statement::Compound(_) => todo!(),
         };
 
         Ok(statement)
@@ -165,7 +166,7 @@ impl Context {
 
 #[cfg(test)]
 mod test {
-    use crate::parser::Function;
+    use crate::parser::{Block, Function};
 
     use super::*;
 
@@ -174,10 +175,12 @@ mod test {
         let program = Program {
             function_definition: Function {
                 name: "main".to_string(),
-                body: vec![BlockItem::Declaration(Declaration {
-                    name: "x".to_string(),
-                    init: None,
-                })],
+                body: Block {
+                    items: vec![BlockItem::Declaration(Declaration {
+                        name: "x".to_string(),
+                        init: None,
+                    })],
+                },
             },
         };
 
@@ -186,7 +189,7 @@ mod test {
 
         assert_eq!(program.function_definition.body.len(), 1);
         assert_eq!(
-            program.function_definition.body[0],
+            program.function_definition.body.items[0],
             BlockItem::Declaration(Declaration {
                 name: "x_0".to_string(),
                 init: None
@@ -199,16 +202,18 @@ mod test {
         let program = Program {
             function_definition: Function {
                 name: "main".to_string(),
-                body: vec![
-                    BlockItem::Declaration(Declaration {
-                        name: "x".to_string(),
-                        init: None,
-                    }),
-                    BlockItem::Declaration(Declaration {
-                        name: "x".to_string(),
-                        init: None,
-                    }),
-                ],
+                body: Block {
+                    items: vec![
+                        BlockItem::Declaration(Declaration {
+                            name: "x".to_string(),
+                            init: None,
+                        }),
+                        BlockItem::Declaration(Declaration {
+                            name: "x".to_string(),
+                            init: None,
+                        }),
+                    ],
+                },
             },
         };
 

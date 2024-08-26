@@ -61,8 +61,10 @@ impl IntoInstructions for parser::Function {
             .body
             .into_iter()
             .map(|item| match item {
-                BlockItem::Statement(statement) => statement.into_instructions(context),
-                BlockItem::Declaration(declaration) => declaration.into_instructions(context),
+                BlockItem::Statement(statement) => statement.clone().into_instructions(context),
+                BlockItem::Declaration(declaration) => {
+                    declaration.clone().into_instructions(context)
+                }
             })
             .flatten()
             .collect::<Vec<_>>();
@@ -119,6 +121,7 @@ impl IntoInstructions for parser::Statement {
                 instructions.push(Instruction::Label(end_label.clone()));
                 instructions
             }
+            parser::Statement::Compound(_) => todo!(),
         }
     }
 }
@@ -409,16 +412,18 @@ impl Context {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::{self, BlockItem};
+    use crate::parser::{self, Block, BlockItem};
 
     #[test]
     fn test_constant() {
         let program = parser::Program {
             function_definition: parser::Function {
                 name: "main".to_string(),
-                body: vec![BlockItem::Statement(parser::Statement::Return(
-                    parser::Exp::Constant(3),
-                ))],
+                body: Block {
+                    items: vec![BlockItem::Statement(parser::Statement::Return(
+                        parser::Exp::Constant(3),
+                    ))],
+                },
             },
         };
         let program = Ir::new(program).run();
@@ -435,12 +440,14 @@ mod tests {
         let program = parser::Program {
             function_definition: parser::Function {
                 name: "main".to_string(),
-                body: vec![BlockItem::Statement(parser::Statement::Return(
-                    parser::Exp::Unary(
-                        parser::UnaryOperator::Negate,
-                        Box::new(parser::Exp::Var("a".to_string())),
-                    ),
-                ))],
+                body: Block {
+                    items: vec![BlockItem::Statement(parser::Statement::Return(
+                        parser::Exp::Unary(
+                            parser::UnaryOperator::Negate,
+                            Box::new(parser::Exp::Var("a".to_string())),
+                        ),
+                    ))],
+                },
             },
         };
 

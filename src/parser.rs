@@ -10,7 +10,7 @@ pub struct Program {
 }
 
 impl Program {
-    pub fn iter(&self) -> std::slice::Iter<BlockItem> {
+    pub fn iter(&self) -> BlockIterator {
         self.function_definition.body.iter()
     }
 }
@@ -18,7 +18,53 @@ impl Program {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Function {
     pub name: String,
-    pub body: Vec<BlockItem>,
+    pub body: Block,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Block {
+    pub items: Vec<BlockItem>,
+}
+
+pub struct BlockIterator<'a> {
+    block: &'a Block,
+    index: usize,
+}
+
+impl<'a> Iterator for BlockIterator<'a> {
+    type Item = &'a BlockItem;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index < self.block.items.len() {
+            let item = &self.block.items[self.index];
+            self.index += 1;
+            Some(item)
+        } else {
+            None
+        }
+    }
+}
+
+impl<'a> IntoIterator for &'a Block {
+    type Item = &'a BlockItem;
+    type IntoIter = BlockIterator<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        BlockIterator {
+            block: self,
+            index: 0,
+        }
+    }
+}
+
+impl Block {
+    pub fn iter(&self) -> BlockIterator {
+        self.into_iter()
+    }
+
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -32,6 +78,7 @@ pub enum Statement {
     Return(Exp),
     Expression(Exp),
     If(Exp, Box<Statement>, Option<Box<Statement>>),
+    Compound(Block),
     Null,
 }
 
@@ -132,18 +179,23 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::OpenParen)?;
         self.expect(TokenKind::Void)?;
         self.expect(TokenKind::CloseParen)?;
-        self.expect(TokenKind::OpenBrace)?;
-
-        let mut body = vec![];
-        while self.peek() != Some(TokenKind::CloseBrace) {
-            let next_block_item = self.parse_block_item()?;
-            body.push(next_block_item);
-        }
-
-        self.expect(TokenKind::CloseBrace)?;
+        let body = self.parse_block()?;
 
         Ok(Function { name, body })
     }
+
+    pub fn parse_block(&mut self) -> anyhow::Result<Block> {
+        self.expect(TokenKind::OpenBrace)?;
+        let mut items = vec![];
+        while self.peek() != Some(TokenKind::CloseBrace) {
+            let next_block_item = self.parse_block_item()?;
+            items.push(next_block_item);
+        }
+        self.expect(TokenKind::CloseBrace)?;
+
+        Ok(Block { items })
+    }
+
     pub fn parse_block_item(&mut self) -> anyhow::Result<BlockItem> {
         if self.peek() == Some(TokenKind::IntKeyword) {
             self.take_token();
@@ -179,6 +231,8 @@ impl<'a> Parser<'a> {
         } else if self.peek() == Some(TokenKind::Semicolon) {
             self.take_token(); // skips Semicolon
             Ok(Statement::Null)
+        } else if self.peek() == Some(TokenKind::OpenBrace) {
+            Ok(Statement::Compound(self.parse_block()?))
         } else if self.peek() == Some(TokenKind::If) {
             self.take_token(); // skips If
             self.expect(TokenKind::OpenParen)?;
@@ -435,5 +489,54 @@ mod tests {
         );
 
         assert_eq!(exp, expected);
+    }
+
+    #[test]
+    fn test_block() {
+        let input = r#"
+            int main(void)
+            {
+                int x;
+                {
+                    x = 3;
+                }
+                {
+                    return x;
+                }
+            }
+        "#;
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.run().unwrap();
+        let mut parser = Parser::new(&tokens);
+        let ast = parser.run().unwrap();
+
+        let expected = Program {
+            function_definition: Function {
+                name: "main".to_string(),
+                body: Block {
+                    items: vec![
+                        BlockItem::Declaration(Declaration {
+                            name: "x".to_string(),
+                            init: None,
+                        }),
+                        BlockItem::Statement(Statement::Compound(Block {
+                            items: vec![BlockItem::Statement(Statement::Expression(
+                                Exp::Assignment(
+                                    Box::new(Exp::Var("x".to_string())),
+                                    Box::new(Exp::Constant(3)),
+                                ),
+                            ))],
+                        })),
+                        BlockItem::Statement(Statement::Compound(Block {
+                            items: vec![BlockItem::Statement(Statement::Return(Exp::Var(
+                                "x".to_string(),
+                            )))],
+                        })),
+                    ],
+                },
+            },
+        };
+
+        assert_eq!(ast, expected);
     }
 }
