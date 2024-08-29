@@ -415,7 +415,10 @@ impl Context {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::{self, Block, BlockItem};
+    use crate::{
+        lexer::Lexer,
+        parser::{self, Block, BlockItem, Parser},
+    };
 
     #[test]
     fn test_constant() {
@@ -461,102 +464,85 @@ mod tests {
 
     #[test]
     fn test_unary() {
-        // let program = parser::Program {
-        //     function_definition: parser::Function {
-        //         name: "main".to_string(),
-        //         body: parser::Statement::Return(parser::Exp::Factor(parser::Factor::Unary(
-        //             parser::UnaryOperator::Complement,
-        //             Box::new(parser::Factor::Constant(2)),
-        //         ))),
-        //     },
-        // };
-        // let program = Ir::new(program).run();
-        // let instr = program.function_definition.instructions;
-        //
-        // assert_eq!(
-        //     instr,
-        //     vec![
-        //         Instruction::Unary(
-        //             UnaryOperator::Complement,
-        //             Val::Constant(2),
-        //             Val::Var("tmp.0".to_string())
-        //         ),
-        //         Instruction::Return(Val::Var("tmp.0".to_string()))
-        //     ]
-        // );
+        let input = "int main(void) { return ~2; }";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.run().unwrap();
+        let mut parser = Parser::new(&tokens);
+        let ast = parser.run().unwrap();
+
+        let program = Ir::new(ast).run();
+        let instr = program.function_definition.instructions;
+
+        assert_eq!(
+            instr,
+            vec![
+                Instruction::Unary(
+                    UnaryOperator::Complement,
+                    Val::Constant(2),
+                    Val::Var("tmp.0".to_string())
+                ),
+                Instruction::Return(Val::Var("tmp.0".to_string()))
+            ]
+        );
     }
 
     #[test]
     fn test_multiple_unaries() {
-        // // -(~(-8))
-        // let program = parser::Program {
-        //     function_definition: parser::Function {
-        //         name: "main".to_string(),
-        //         body: parser::Statement::Return(parser::Exp::Factor(parser::Factor::Unary(
-        //             parser::UnaryOperator::Negate,
-        //             Box::new(parser::Factor::Unary(
-        //                 parser::UnaryOperator::Complement,
-        //                 Box::new(parser::Factor::Unary(
-        //                     parser::UnaryOperator::Negate,
-        //                     Box::new(parser::Factor::Constant(8)),
-        //                 )),
-        //             )),
-        //         ))),
-        //     },
-        // };
-        // let program = Ir::new(program).run();
-        // let instr = program.function_definition.instructions;
-        //
-        // assert_eq!(
-        //     instr,
-        //     vec![
-        //         Instruction::Unary(
-        //             UnaryOperator::Negate,
-        //             Val::Constant(8),
-        //             Val::Var("tmp.0".to_string())
-        //         ),
-        //         Instruction::Unary(
-        //             UnaryOperator::Complement,
-        //             Val::Var("tmp.0".to_string()),
-        //             Val::Var("tmp.1".to_string())
-        //         ),
-        //         Instruction::Unary(
-        //             UnaryOperator::Negate,
-        //             Val::Var("tmp.1".to_string()),
-        //             Val::Var("tmp.2".to_string())
-        //         ),
-        //         Instruction::Return(Val::Var("tmp.2".to_string()))
-        //     ]
-        // );
+        let input = "int main(void) { return -(~(-8)); }";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.run().unwrap();
+        let mut parser = Parser::new(&tokens);
+        let ast = parser.run().unwrap();
+
+        let program = Ir::new(ast).run();
+        let instr = program.function_definition.instructions;
+
+        assert_eq!(
+            instr,
+            vec![
+                Instruction::Unary(
+                    UnaryOperator::Negate,
+                    Val::Constant(8),
+                    Val::Var("tmp.0".to_string())
+                ),
+                Instruction::Unary(
+                    UnaryOperator::Complement,
+                    Val::Var("tmp.0".to_string()),
+                    Val::Var("tmp.1".to_string())
+                ),
+                Instruction::Unary(
+                    UnaryOperator::Negate,
+                    Val::Var("tmp.1".to_string()),
+                    Val::Var("tmp.2".to_string())
+                ),
+                Instruction::Return(Val::Var("tmp.2".to_string()))
+            ]
+        );
     }
 
     #[test]
     fn test_short_circuit() {
-        // let program = parser::Program {
-        //     function_definition: parser::Function {
-        //         name: "main".to_string(),
-        //         body: parser::Statement::Return(parser::Exp::BinaryOperation(
-        //             parser::BinaryOperator::And,
-        //             Box::new(parser::Exp::Factor(parser::Factor::Constant(1))),
-        //             Box::new(parser::Exp::Factor(parser::Factor::Constant(2))),
-        //         )),
-        //     },
-        // };
-        // let program = Ir::new(program).run();
-        // let instr = program.function_definition.instructions;
-        //
-        // assert_eq!(
-        //     instr,
-        //     vec![
-        //         Instruction::JumpIfZero(Val::Constant(1), "tmp.0".to_string()),
-        //         Instruction::JumpIfZero(Val::Constant(2), "tmp.0".to_string()),
-        //         Instruction::Copy(Val::Constant(1), Val::Var("tmp.2".to_string())),
-        //         Instruction::Jump("tmp.1".to_string()),
-        //         Instruction::Label("tmp.0".to_string()),
-        //         Instruction::Copy(Val::Constant(0), Val::Var("tmp.2".to_string())),
-        //         Instruction::Label("tmp.1".to_string()),
-        //         Instruction::Return(Val::Var("tmp.2".to_string()))
-        //     ]
-        // );
+        let input = "int main(void) { return 1 || 2; }";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.run().unwrap();
+        let mut parser = Parser::new(&tokens);
+        let ast = parser.run().unwrap();
+
+        let program = Ir::new(ast).run();
+        let instr = program.function_definition.instructions;
+
+        assert_eq!(
+            instr,
+            vec![
+                Instruction::JumpIfNotZero(Val::Constant(1), "short_circuit.label.0".to_string()),
+                Instruction::JumpIfNotZero(Val::Constant(2), "short_circuit.label.0".to_string()),
+                Instruction::Copy(Val::Constant(0), Val::Var("tmp.2".to_string())),
+                Instruction::Jump("end.label.1".to_string()),
+                Instruction::Label("short_circuit.label.0".to_string()),
+                Instruction::Copy(Val::Constant(1), Val::Var("tmp.2".to_string())),
+                Instruction::Label("end.label.1".to_string()),
+                Instruction::Return(Val::Var("tmp.2".to_string()))
+            ]
+        );
     }
 }
