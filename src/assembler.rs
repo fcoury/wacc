@@ -44,8 +44,7 @@ impl From<ir::Function> for Function {
         let instructions: Vec<Instruction> = function
             .instructions
             .into_iter()
-            .map(Into::<Vec<Instruction>>::into)
-            .flatten()
+            .flat_map(Into::<Vec<Instruction>>::into)
             .collect();
 
         Function {
@@ -400,7 +399,7 @@ impl Assembler {
             .function_definition
             .instructions
             .into_iter()
-            .map(|instruction| match instruction {
+            .flat_map(|instruction| match instruction {
                 Instruction::Mov(src, dst) => match (src, dst) {
                     (Operand::Stack(src), Operand::Stack(dst)) => {
                         vec![
@@ -444,7 +443,6 @@ impl Assembler {
                 ],
                 instr => vec![instr],
             })
-            .flatten()
             .collect();
 
         Program {
@@ -611,14 +609,12 @@ impl Assembler {
 
         instructions.insert(0, Instruction::AllocateStack(-stack_offset));
 
-        let new_program = Program {
+        Program {
             function_definition: Function {
                 name: program.function_definition.name,
                 instructions,
             },
-        };
-
-        new_program
+        }
     }
 }
 
@@ -738,8 +734,7 @@ mod tests {
             ir::Val::Var("tmp.0".to_string()),
             ir::Val::Var("tmp.1".to_string()),
             ir::Val::Var("tmp.2".to_string()),
-        )
-        .into()]);
+        )]);
 
         let asm = Assembler::new(prog.clone());
         let prog = asm.replace_pseudoregisters(prog.into());
@@ -760,8 +755,7 @@ mod tests {
             ir::Val::Var("tmp.0".to_string()),
             ir::Val::Var("tmp.1".to_string()),
             ir::Val::Var("tmp.2".to_string()),
-        )
-        .into()]);
+        )]);
 
         let asm = Assembler::new(prog.clone());
         let prog = asm.replace_pseudoregisters(prog.into());
@@ -781,8 +775,7 @@ mod tests {
             ir::Val::Var("tmp.0".to_string()),
             ir::Val::Var("tmp.1".to_string()),
             ir::Val::Var("tmp.2".to_string()),
-        )
-        .into()]);
+        )]);
 
         let asm = Assembler::new(prog.clone());
         let prog = asm.replace_pseudoregisters(prog.into());
@@ -803,8 +796,7 @@ mod tests {
             ir::Val::Constant(3),
             ir::Val::Var("tmp.1".to_string()),
             ir::Val::Var("tmp.2".to_string()),
-        )
-        .into()]);
+        )]);
 
         let asm = Assembler::new(prog.clone());
         let prog = asm.replace_pseudoregisters(prog.into());
@@ -822,8 +814,7 @@ mod tests {
             ir::Val::Var("tmp.1".to_string()),
             ir::Val::Constant(3),
             ir::Val::Var("tmp.2".to_string()),
-        )
-        .into()]);
+        )]);
 
         let asm = Assembler::new(prog.clone());
         let prog = asm.replace_pseudoregisters(prog.into());

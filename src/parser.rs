@@ -290,7 +290,7 @@ impl<'a> Parser<'a> {
                 break;
             };
             let next_prec = precedence(&next_token);
-            if !(next_prec >= min_prec.unwrap_or(0)) {
+            if next_prec < min_prec.unwrap_or(0) {
                 break;
             }
 
@@ -431,7 +431,7 @@ impl<'a> Parser<'a> {
     }
 
     fn peek(&self) -> Option<TokenKind> {
-        self.tokens.get(0).map(|t| t.kind.clone())
+        self.tokens.first().map(|t| t.kind.clone())
     }
 
     fn take_token(&mut self) {

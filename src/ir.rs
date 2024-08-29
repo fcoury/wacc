@@ -60,13 +60,12 @@ impl IntoInstructions for parser::Function {
         let mut instructions = self
             .body
             .into_iter()
-            .map(|item| match item {
+            .flat_map(|item| match item {
                 BlockItem::Statement(statement) => statement.clone().into_instructions(context),
                 BlockItem::Declaration(declaration) => {
                     declaration.clone().into_instructions(context)
                 }
             })
-            .flatten()
             .collect::<Vec<_>>();
         // if no return is found
         if let Some(last) = instructions.last() {
@@ -430,7 +429,7 @@ mod tests {
         let instr = program.function_definition.instructions;
 
         assert_eq!(
-            instr.get(0).unwrap(),
+            instr.first().unwrap(),
             &Instruction::Return(Val::Constant(3))
         );
     }
