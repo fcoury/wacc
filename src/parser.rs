@@ -26,6 +26,12 @@ pub struct Block {
     pub items: Vec<BlockItem>,
 }
 
+impl Block {
+    pub fn new(items: Vec<BlockItem>) -> Block {
+        Block { items }
+    }
+}
+
 pub struct BlockIterator<'a> {
     block: &'a Block,
     index: usize,
