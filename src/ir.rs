@@ -57,16 +57,7 @@ trait IntoInstructions {
 
 impl IntoInstructions for parser::Function {
     fn into_instructions(self, context: &mut Context) -> Vec<Instruction> {
-        let mut instructions = self
-            .body
-            .into_iter()
-            .flat_map(|item| match item {
-                BlockItem::Statement(statement) => statement.clone().into_instructions(context),
-                BlockItem::Declaration(declaration) => {
-                    declaration.clone().into_instructions(context)
-                }
-            })
-            .collect::<Vec<_>>();
+        let mut instructions = self.body.into_instructions(context);
         // if no return is found
         if let Some(last) = instructions.last() {
             if !matches!(last, Instruction::Return(_)) {
@@ -76,6 +67,19 @@ impl IntoInstructions for parser::Function {
             instructions.push(Instruction::Return(Val::Constant(0)));
         }
         instructions
+    }
+}
+
+impl IntoInstructions for parser::Block {
+    fn into_instructions(self, context: &mut Context) -> Vec<Instruction> {
+        self.into_iter()
+            .flat_map(|item| match item {
+                BlockItem::Statement(statement) => statement.clone().into_instructions(context),
+                BlockItem::Declaration(declaration) => {
+                    declaration.clone().into_instructions(context)
+                }
+            })
+            .collect::<Vec<_>>()
     }
 }
 
@@ -120,7 +124,7 @@ impl IntoInstructions for parser::Statement {
                 instructions.push(Instruction::Label(end_label.clone()));
                 instructions
             }
-            parser::Statement::Compound(_) => todo!(),
+            parser::Statement::Compound(block) => block.into_instructions(context),
         }
     }
 }
