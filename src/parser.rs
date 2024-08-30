@@ -79,13 +79,32 @@ pub enum BlockItem {
     Statement(Statement),
 }
 
+pub type Label = Option<String>;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement {
     Return(Exp),
     Expression(Exp),
     If(Exp, Box<Statement>, Option<Box<Statement>>),
     Compound(Block),
+    Break(Label),
+    Continue(Label),
+    While(Exp, Box<Statement>, Label),
+    DoWhile(Box<Statement>, Exp, Label),
+    For(
+        Option<ForInit>,
+        Option<Exp>,
+        Option<Exp>,
+        Box<Statement>,
+        Label,
+    ),
     Null,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ForInit {
+    Declaration(Declaration),
+    Expression(Option<Exp>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -253,10 +272,79 @@ impl<'a> Parser<'a> {
             };
 
             Ok(Statement::If(condition, then_statement, else_statement))
+        } else if self.peek() == Some(TokenKind::Break) {
+            self.take_token(); // skips Break
+            self.expect(TokenKind::Semicolon)?;
+            Ok(Statement::Break(None))
+        } else if self.peek() == Some(TokenKind::Continue) {
+            self.take_token(); // skips Continue
+            self.expect(TokenKind::Semicolon)?;
+            Ok(Statement::Continue(None))
+        } else if self.peek() == Some(TokenKind::While) {
+            self.take_token(); // skips While
+            self.expect(TokenKind::OpenParen)?;
+            let condition = self.parse_exp(None)?;
+            self.expect(TokenKind::CloseParen)?;
+            let statement = Box::new(self.parse_statement()?);
+            Ok(Statement::While(condition, statement, None))
+        } else if self.peek() == Some(TokenKind::Do) {
+            self.take_token(); // skips Do
+            let statement = Box::new(self.parse_statement()?);
+            self.expect(TokenKind::While)?;
+            self.expect(TokenKind::OpenParen)?;
+            let condition = self.parse_exp(None)?;
+            self.expect(TokenKind::CloseParen)?;
+            self.expect(TokenKind::Semicolon)?;
+            Ok(Statement::DoWhile(statement, condition, None))
+        } else if self.peek() == Some(TokenKind::For) {
+            println!("Parsing for...");
+            self.take_token(); // skips For
+            self.expect(TokenKind::OpenParen)?;
+            let init = match self.peek() {
+                Some(TokenKind::Semicolon) => None,
+                _ => Some(self.parse_for_init()?),
+            };
+            println!("Parsed init: {:?}", init);
+            self.expect(TokenKind::Semicolon)?;
+            let condition = match self.peek() {
+                Some(TokenKind::Semicolon) => None,
+                _ => Some(self.parse_exp(None)?),
+            };
+            println!("Parsed condition: {:?}", condition);
+            self.expect(TokenKind::Semicolon)?;
+            let increment = match self.peek() {
+                Some(TokenKind::CloseParen) => None,
+                _ => Some(self.parse_exp(None)?),
+            };
+            println!("Parsed increment: {:?}", increment);
+            self.expect(TokenKind::CloseParen)?;
+            let statement = Box::new(self.parse_statement()?);
+            Ok(Statement::For(init, condition, increment, statement, None))
         } else {
             let exp = self.parse_exp(None)?;
             self.expect(TokenKind::Semicolon)?;
             Ok(Statement::Expression(exp))
+        }
+    }
+
+    pub fn parse_for_init(&mut self) -> anyhow::Result<ForInit> {
+        if self.peek() == Some(TokenKind::IntKeyword) {
+            self.take_token();
+            let name = self.parse_identifier()?;
+            let init = if self.peek() == Some(TokenKind::Equal) {
+                self.take_token();
+                Some(self.parse_exp(None)?)
+            } else {
+                None
+            };
+            Ok(ForInit::Declaration(Declaration { name, init }))
+        } else {
+            let exp = if self.peek() == Some(TokenKind::Semicolon) {
+                None
+            } else {
+                Some(self.parse_exp(None)?)
+            };
+            Ok(ForInit::Expression(exp))
         }
     }
 
@@ -544,5 +632,53 @@ mod tests {
         };
 
         assert_eq!(ast, expected);
+    }
+
+    #[test]
+    fn test_null_for() {
+        let input = r#"
+            int main(void) {
+                int a = 0;
+                for (; ; ) {
+                    a = a + 1;
+                    if (a > 3)
+                        break;
+                }
+
+                return a;
+            }
+        "#;
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.run().unwrap();
+        let mut parser = Parser::new(&tokens);
+        let ast = parser.run().unwrap();
+
+        println!("{:?}", ast);
+
+        // assert_eq!(ast, expected);
+    }
+
+    #[test]
+    fn test_nested_break() {
+        let input = r#"
+            int main(void) {
+                int ans = 0;
+                for (int i = 0; i < 10; i = i + 1)
+                    for (int j = 0; j < 10; j = j + 1)
+                        if ((i / 2)*2 == i)
+                            break;
+                        else
+                            ans = ans + i;
+                return ans;
+            }
+        "#;
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.run().unwrap();
+        let mut parser = Parser::new(&tokens);
+        let ast = parser.run().unwrap();
+
+        println!("{:?}", ast);
+
+        // assert_eq!(ast, expected);
     }
 }

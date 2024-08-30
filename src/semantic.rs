@@ -71,6 +71,11 @@ impl Analysis {
                     .collect();
                 Statement::Compound(self.resolve_block(context, &mut variable_map, block)?)
             }
+            Statement::Break(_) => todo!(),
+            Statement::Continue(_) => todo!(),
+            Statement::While(_, _, _) => todo!(),
+            Statement::DoWhile(_, _, _) => todo!(),
+            Statement::For(_, _, _, _, _) => todo!(),
         };
 
         Ok(statement)

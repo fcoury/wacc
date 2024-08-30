@@ -125,6 +125,11 @@ impl IntoInstructions for parser::Statement {
                 instructions
             }
             parser::Statement::Compound(block) => block.into_instructions(context),
+            parser::Statement::Break(_) => todo!(),
+            parser::Statement::Continue(_) => todo!(),
+            parser::Statement::While(_, _, _) => todo!(),
+            parser::Statement::DoWhile(_, _, _) => todo!(),
+            parser::Statement::For(_, _, _, _, _) => todo!(),
         }
     }
 }
