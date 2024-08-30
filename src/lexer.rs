@@ -6,6 +6,7 @@ use strum_macros::EnumIter;
 pub struct Token<'a> {
     pub kind: TokenKind,
     pub origin: &'a str,
+    pub offset: usize,
 }
 
 #[derive(EnumIter, Debug, PartialEq, Clone)]
@@ -17,6 +18,11 @@ pub enum TokenKind {
     Return,
     If,
     Else,
+    Do,
+    While,
+    For,
+    Break,
+    Continue,
 
     // then operators
     AmpersandAmpersand,
@@ -69,6 +75,11 @@ impl TokenKind {
             TokenKind::Return => Some(Regex::new(r"^return\b").unwrap()),
             TokenKind::If => Some(Regex::new(r"^if\b").unwrap()),
             TokenKind::Else => Some(Regex::new(r"^else\b").unwrap()),
+            TokenKind::Do => Some(Regex::new(r"^do\b").unwrap()),
+            TokenKind::While => Some(Regex::new(r"^while\b").unwrap()),
+            TokenKind::For => Some(Regex::new(r"^for\b").unwrap()),
+            TokenKind::Break => Some(Regex::new(r"^break\b").unwrap()),
+            TokenKind::Continue => Some(Regex::new(r"^continue\b").unwrap()),
             TokenKind::AmpersandAmpersand => Some(Regex::new(r"^\&\&").unwrap()),
             TokenKind::PipePipe => Some(Regex::new(r"^\|\|").unwrap()),
             TokenKind::EqualEqual => Some(Regex::new(r"^==").unwrap()),
@@ -127,6 +138,7 @@ impl<'a> Lexer<'a> {
                 if let Some(regex) = regex {
                     if let Some(mat) = regex.find(&self.input[self.pos..]) {
                         let token_str = mat.as_str();
+                        let offset = self.pos + mat.start();
                         self.pos += token_str.len();
                         // println!("token_str: {token_str}");
                         // println!("rest: {:?}\n", &self.input[self.pos..]);
@@ -142,6 +154,7 @@ impl<'a> Lexer<'a> {
                         tokens.push(Token {
                             kind,
                             origin: token_str,
+                            offset,
                         });
                         matched = true;
                         break;
@@ -161,6 +174,7 @@ impl<'a> Lexer<'a> {
         tokens.push(Token {
             kind: TokenKind::Eof,
             origin: "",
+            offset: self.pos,
         });
 
         Ok(tokens)
