@@ -26,9 +26,14 @@ impl From<ir::Program> for Program {
 }
 
 impl Display for Program {
+    #[cfg(not(target_os = "linux"))]
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "{}", self.function_definition)
+    }
+
+    #[cfg(target_os = "linux")]
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "{}", self.function_definition);
-        #[cfg(target_os = "linux")]
         writeln!(f, "\t.section .note.GNU-stack,\"\",@progbits")
     }
 }
