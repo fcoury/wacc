@@ -127,9 +127,23 @@ impl IntoInstructions for parser::Statement {
             parser::Statement::Compound(block) => block.into_instructions(context),
             parser::Statement::Break(_) => todo!(),
             parser::Statement::Continue(_) => todo!(),
-            parser::Statement::While(_, _, _) => todo!(),
-            parser::Statement::DoWhile(_, _, _) => todo!(),
-            parser::Statement::For(_, _, _, _, _) => todo!(),
+            parser::Statement::While {
+                condition,
+                body,
+                label,
+            } => todo!(),
+            parser::Statement::DoWhile {
+                body,
+                condition,
+                label,
+            } => todo!(),
+            parser::Statement::For {
+                init,
+                condition,
+                post,
+                body,
+                label,
+            } => todo!(),
         }
     }
 }

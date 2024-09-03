@@ -89,15 +89,23 @@ pub enum Statement {
     Compound(Block),
     Break(Label),
     Continue(Label),
-    While(Exp, Box<Statement>, Label),
-    DoWhile(Box<Statement>, Exp, Label),
-    For(
-        Option<ForInit>,
-        Option<Exp>,
-        Option<Exp>,
-        Box<Statement>,
-        Label,
-    ),
+    While {
+        condition: Exp,
+        body: Box<Statement>,
+        label: Label,
+    },
+    DoWhile {
+        body: Box<Statement>,
+        condition: Exp,
+        label: Label,
+    },
+    For {
+        init: Option<ForInit>,
+        condition: Option<Exp>,
+        post: Option<Exp>,
+        body: Box<Statement>,
+        label: Label,
+    },
     Null,
 }
 
@@ -285,17 +293,25 @@ impl<'a> Parser<'a> {
             self.expect(TokenKind::OpenParen)?;
             let condition = self.parse_exp(None)?;
             self.expect(TokenKind::CloseParen)?;
-            let statement = Box::new(self.parse_statement()?);
-            Ok(Statement::While(condition, statement, None))
+            let body = Box::new(self.parse_statement()?);
+            Ok(Statement::While {
+                condition,
+                body,
+                label: None,
+            })
         } else if self.peek() == Some(TokenKind::Do) {
             self.take_token(); // skips Do
-            let statement = Box::new(self.parse_statement()?);
+            let body = Box::new(self.parse_statement()?);
             self.expect(TokenKind::While)?;
             self.expect(TokenKind::OpenParen)?;
             let condition = self.parse_exp(None)?;
             self.expect(TokenKind::CloseParen)?;
             self.expect(TokenKind::Semicolon)?;
-            Ok(Statement::DoWhile(statement, condition, None))
+            Ok(Statement::DoWhile {
+                body,
+                condition,
+                label: None,
+            })
         } else if self.peek() == Some(TokenKind::For) {
             println!("Parsing for...");
             self.take_token(); // skips For
@@ -312,14 +328,20 @@ impl<'a> Parser<'a> {
             };
             println!("Parsed condition: {:?}", condition);
             self.expect(TokenKind::Semicolon)?;
-            let increment = match self.peek() {
+            let post = match self.peek() {
                 Some(TokenKind::CloseParen) => None,
                 _ => Some(self.parse_exp(None)?),
             };
-            println!("Parsed increment: {:?}", increment);
+            println!("Parsed increment: {:?}", post);
             self.expect(TokenKind::CloseParen)?;
-            let statement = Box::new(self.parse_statement()?);
-            Ok(Statement::For(init, condition, increment, statement, None))
+            let body = Box::new(self.parse_statement()?);
+            Ok(Statement::For {
+                init,
+                condition,
+                post,
+                body,
+                label: None,
+            })
         } else {
             let exp = self.parse_exp(None)?;
             self.expect(TokenKind::Semicolon)?;
