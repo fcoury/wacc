@@ -201,29 +201,25 @@ fn label_statement(
             anyhow::bail!("Continue statement outside of loop")
         }
         Statement::While {
-            condition,
-            body,
-            label,
+            condition, body, ..
         } => {
             let new_label = context.next_label("while");
-            let body = label_statement(context, body, Some(new_label))?;
+            let body = label_statement(context, body, Some(new_label.clone()))?;
             Statement::While {
                 condition: condition.clone(),
                 body: Box::new(body),
-                label: label.clone(),
+                label: Some(new_label),
             }
         }
         Statement::DoWhile {
-            body,
-            condition,
-            label,
+            body, condition, ..
         } => {
             let new_label = context.next_label("dowhile");
-            let body = label_statement(context, body, Some(new_label))?;
+            let body = label_statement(context, body, Some(new_label.clone()))?;
             Statement::DoWhile {
                 body: Box::new(body),
                 condition: condition.clone(),
-                label: label.clone(),
+                label: Some(new_label),
             }
         }
         Statement::For {
@@ -231,16 +227,16 @@ fn label_statement(
             condition,
             post,
             body,
-            label,
+            ..
         } => {
             let new_label = context.next_label("for");
-            let body = label_statement(context, body, Some(new_label))?;
+            let body = label_statement(context, body, Some(new_label.clone()))?;
             Statement::For {
                 init: init.clone(),
                 condition: condition.clone(),
                 post: post.clone(),
                 body: Box::new(body),
-                label: label.clone(),
+                label: Some(new_label),
             }
         }
         Statement::Return(exp) => Statement::Return(exp.clone()),
@@ -474,5 +470,23 @@ mod test {
                 })
             ])))
         );
+    }
+
+    #[test]
+    fn test_label_assignment() {
+        let while_statement = Statement::While {
+            condition: Exp::Constant(1),
+            body: Box::new(Statement::Expression(Exp::Constant(1))),
+            label: None,
+        };
+
+        let mut context = Context::new();
+        let new_while = label_statement(&mut context, &while_statement, None).unwrap();
+
+        let Statement::While { label, .. } = new_while else {
+            panic!("Not a while");
+        };
+
+        assert!(label.is_some());
     }
 }

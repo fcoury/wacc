@@ -106,7 +106,7 @@ fn compile(input_file: &Path, args: &Args) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let tacky = ir::Ir::new(ast).run();
+    let tacky = ir::Ir::new(ast).run()?;
     println!("\nTacky:");
     for instr in tacky.iter() {
         println!("{:?}", instr);

@@ -15,11 +15,13 @@ impl Program {
     }
 }
 
-impl From<parser::Program> for Program {
-    fn from(program: parser::Program) -> Self {
-        Program {
-            function_definition: program.function_definition.into(),
-        }
+impl TryFrom<parser::Program> for Program {
+    type Error = anyhow::Error;
+
+    fn try_from(program: parser::Program) -> anyhow::Result<Self> {
+        Ok(Program {
+            function_definition: program.function_definition.try_into()?,
+        })
     }
 }
 
@@ -29,13 +31,15 @@ pub struct Function {
     pub instructions: Vec<Instruction>,
 }
 
-impl From<parser::Function> for Function {
-    fn from(function: parser::Function) -> Self {
+impl TryFrom<parser::Function> for Function {
+    type Error = anyhow::Error;
+
+    fn try_from(function: parser::Function) -> anyhow::Result<Self> {
         let mut context = Context::new();
-        Function {
+        Ok(Function {
             name: function.name.clone(),
-            instructions: function.into_instructions(&mut context),
-        }
+            instructions: function.into_instructions(&mut context)?,
+        })
     }
 }
 
@@ -52,12 +56,12 @@ pub enum Instruction {
 }
 
 trait IntoInstructions {
-    fn into_instructions(self, context: &mut Context) -> Vec<Instruction>;
+    fn into_instructions(self, context: &mut Context) -> anyhow::Result<Vec<Instruction>>;
 }
 
 impl IntoInstructions for parser::Function {
-    fn into_instructions(self, context: &mut Context) -> Vec<Instruction> {
-        let mut instructions = self.body.into_instructions(context);
+    fn into_instructions(self, context: &mut Context) -> anyhow::Result<Vec<Instruction>> {
+        let mut instructions = self.body.into_instructions(context)?;
         // if no return is found
         if let Some(last) = instructions.last() {
             if !matches!(last, Instruction::Return(_)) {
@@ -66,46 +70,77 @@ impl IntoInstructions for parser::Function {
         } else {
             instructions.push(Instruction::Return(Val::Constant(0)));
         }
-        instructions
+        Ok(instructions)
     }
 }
 
 impl IntoInstructions for parser::Block {
-    fn into_instructions(self, context: &mut Context) -> Vec<Instruction> {
-        self.into_iter()
-            .flat_map(|item| match item {
+    fn into_instructions(self, context: &mut Context) -> anyhow::Result<Vec<Instruction>> {
+        Ok(self
+            .into_iter()
+            .map(|item| match item {
                 BlockItem::Statement(statement) => statement.clone().into_instructions(context),
                 BlockItem::Declaration(declaration) => {
                     declaration.clone().into_instructions(context)
                 }
             })
-            .collect::<Vec<_>>()
+            .collect::<Result<Vec<Vec<Instruction>>, _>>()?
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>())
     }
 }
 
 impl IntoInstructions for parser::Exp {
-    fn into_instructions(self, context: &mut Context) -> Vec<Instruction> {
+    fn into_instructions(self, context: &mut Context) -> anyhow::Result<Vec<Instruction>> {
         let mut instructions = vec![];
         emit_ir(self, &mut instructions, context);
-        instructions
+        Ok(instructions)
     }
 }
 
+impl IntoInstructions for parser::ForInit {
+    fn into_instructions(self, context: &mut Context) -> anyhow::Result<Vec<Instruction>> {
+        match self {
+            parser::ForInit::Declaration(decl) => decl.into_instructions(context),
+            parser::ForInit::Expression(exp) => {
+                let mut instructions = vec![];
+
+                if let Some(exp) = exp {
+                    // we disregard any returns of the init expression, but generate the
+                    // instructions
+                    _ = emit_ir(exp, &mut instructions, context);
+                }
+
+                Ok(instructions)
+            }
+        }
+    }
+}
+
+fn break_label_for(label: String) -> String {
+    format!("break_{label}")
+}
+
+fn continue_label_for(label: String) -> String {
+    format!("continue_{label}")
+}
+
 impl IntoInstructions for parser::Statement {
-    fn into_instructions(self, context: &mut Context) -> Vec<Instruction> {
+    fn into_instructions(self, context: &mut Context) -> anyhow::Result<Vec<Instruction>> {
         match self {
             parser::Statement::Return(exp) => {
                 let mut instructions = vec![];
                 let val = emit_ir(exp, &mut instructions, context);
                 instructions.push(Instruction::Return(val));
-                instructions
+                Ok(instructions)
             }
             parser::Statement::Expression(exp) => {
                 let mut instructions = vec![];
                 emit_ir(exp, &mut instructions, context);
-                instructions
+                Ok(instructions)
             }
-            parser::Statement::Null => vec![],
+            parser::Statement::Null => Ok(vec![]),
             parser::Statement::If(cond, then, else_) => {
                 let mut instructions = vec![];
                 let cond = emit_ir(cond, &mut instructions, context);
@@ -113,50 +148,163 @@ impl IntoInstructions for parser::Statement {
                 let else_label = context.next_label("else");
 
                 instructions.push(Instruction::JumpIfZero(cond.clone(), else_label.clone()));
-                let then_instructions = then.into_instructions(context);
+                let then_instructions = then.into_instructions(context)?;
                 instructions.extend(then_instructions);
                 instructions.push(Instruction::Jump(end_label.clone()));
                 instructions.push(Instruction::Label(else_label.clone()));
                 if let Some(else_) = else_ {
-                    let else_instructions = else_.into_instructions(context);
+                    let else_instructions = else_.into_instructions(context)?;
                     instructions.extend(else_instructions);
                 }
                 instructions.push(Instruction::Label(end_label.clone()));
-                instructions
+                Ok(instructions)
             }
             parser::Statement::Compound(block) => block.into_instructions(context),
-            parser::Statement::Break(_) => todo!(),
-            parser::Statement::Continue(_) => todo!(),
+            parser::Statement::Break(label) => {
+                let Some(label) = label else {
+                    anyhow::bail!("Break statement outside loop");
+                };
+
+                Ok(vec![Instruction::Jump(break_label_for(label))])
+            }
+            parser::Statement::Continue(label) => {
+                let Some(label) = label else {
+                    anyhow::bail!("Continue statement outside loop");
+                };
+
+                Ok(vec![Instruction::Jump(continue_label_for(label))])
+            }
             parser::Statement::While {
                 condition,
                 body,
                 label,
-            } => todo!(),
+            } => {
+                let mut instructions = vec![];
+
+                let Some(label) = label else {
+                    anyhow::bail!("Unexpected error: While label is missing");
+                };
+                let continue_label = continue_label_for(label.clone());
+                let break_label = break_label_for(label.clone());
+
+                // start label
+                instructions.push(Instruction::Label(continue_label.clone()));
+
+                // condition
+                let cond = emit_ir(condition, &mut instructions, context);
+                instructions.push(Instruction::JumpIfZero(cond.clone(), break_label.clone()));
+
+                // body instructions
+                let body_instructions = body.into_instructions(context)?;
+                instructions.extend(body_instructions);
+
+                // jump back to continue label
+                instructions.push(Instruction::Jump(continue_label));
+
+                // break label
+                instructions.push(Instruction::Label(break_label));
+
+                Ok(instructions)
+            }
             parser::Statement::DoWhile {
                 body,
                 condition,
                 label,
-            } => todo!(),
+            } => {
+                let mut instructions = vec![];
+
+                let Some(start_label) = label else {
+                    anyhow::bail!("Unexpected error: DoWhile label is missing");
+                };
+                let continue_label = continue_label_for(start_label.clone());
+                let break_label = break_label_for(start_label.clone());
+
+                // start label
+                instructions.push(Instruction::Label(start_label.clone()));
+
+                // body instructions
+                let body_instructions = body.into_instructions(context)?;
+                instructions.extend(body_instructions);
+
+                // continue label
+                instructions.push(Instruction::Label(continue_label));
+
+                // condition
+                let cond = emit_ir(condition, &mut instructions, context);
+                instructions.push(Instruction::JumpIfNotZero(cond.clone(), start_label));
+
+                // break label
+                instructions.push(Instruction::Label(break_label));
+
+                Ok(instructions)
+            }
             parser::Statement::For {
                 init,
                 condition,
                 post,
                 body,
                 label,
-            } => todo!(),
+            } => {
+                let mut instructions = vec![];
+
+                let Some(start_label) = label else {
+                    anyhow::bail!("Unexpected error: For label is missing");
+                };
+                let break_label = break_label_for(start_label.clone());
+                let continue_label = continue_label_for(start_label.clone());
+
+                if let Some(init) = init {
+                    instructions.extend(init.into_instructions(context)?);
+                }
+
+                // start label
+                instructions.push(Instruction::Label(start_label.clone()));
+
+                // condition
+                if let Some(condition) = condition {
+                    let cond = emit_ir(condition, &mut instructions, context);
+                    instructions.push(Instruction::JumpIfZero(cond.clone(), break_label.clone()));
+                } else {
+                    // if condition is absent, C standard says this expression is "replaced by a
+                    // nonzero constant" (section 6.8.5.3, paragraph 2)
+                    instructions.push(Instruction::JumpIfZero(
+                        Val::Constant(1),
+                        break_label.clone(),
+                    ));
+                }
+
+                // body instructions
+                instructions.extend(body.into_instructions(context)?);
+
+                // continue label
+                instructions.push(Instruction::Label(continue_label.clone()));
+
+                // post
+                if let Some(post) = post {
+                    instructions.extend(post.into_instructions(context)?);
+                }
+
+                // jumps to start
+                instructions.push(Instruction::Jump(start_label));
+
+                // break label
+                instructions.push(Instruction::Label(break_label));
+
+                Ok(instructions)
+            }
         }
     }
 }
 
 impl IntoInstructions for parser::Declaration {
-    fn into_instructions(self, context: &mut Context) -> Vec<Instruction> {
+    fn into_instructions(self, context: &mut Context) -> anyhow::Result<Vec<Instruction>> {
         let Some(init) = self.init else {
-            return vec![];
+            return Ok(vec![]);
         };
 
         let mut instructions = vec![];
         emit_assignment(self.name, init, &mut instructions, context);
-        instructions
+        Ok(instructions)
     }
 }
 
@@ -404,8 +552,8 @@ impl Ir {
         Self { program }
     }
 
-    pub fn run(self) -> Program {
-        self.program.into()
+    pub fn run(self) -> anyhow::Result<Program> {
+        self.program.try_into()
     }
 }
 
@@ -451,7 +599,7 @@ mod tests {
                 },
             },
         };
-        let program = Ir::new(program).run();
+        let program = Ir::new(program).run().unwrap();
         let instr = program.function_definition.instructions;
 
         assert_eq!(
@@ -476,7 +624,7 @@ mod tests {
             },
         };
 
-        let program = Ir::new(program).run();
+        let program = Ir::new(program).run().unwrap();
         let instr = program.function_definition.instructions;
         println!("{:?}", instr);
     }
@@ -489,7 +637,7 @@ mod tests {
         let mut parser = Parser::new(&tokens);
         let ast = parser.run().unwrap();
 
-        let program = Ir::new(ast).run();
+        let program = Ir::new(ast).run().unwrap();
         let instr = program.function_definition.instructions;
 
         assert_eq!(
@@ -513,7 +661,7 @@ mod tests {
         let mut parser = Parser::new(&tokens);
         let ast = parser.run().unwrap();
 
-        let program = Ir::new(ast).run();
+        let program = Ir::new(ast).run().unwrap();
         let instr = program.function_definition.instructions;
 
         assert_eq!(
@@ -547,7 +695,7 @@ mod tests {
         let mut parser = Parser::new(&tokens);
         let ast = parser.run().unwrap();
 
-        let program = Ir::new(ast).run();
+        let program = Ir::new(ast).run().unwrap();
         let instr = program.function_definition.instructions;
 
         assert_eq!(
