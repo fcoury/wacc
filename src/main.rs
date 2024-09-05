@@ -37,6 +37,10 @@ struct Args {
 
     /// the file to parse
     input: PathBuf,
+
+    /// skip linker
+    #[clap(short)]
+    c: bool,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -128,15 +132,20 @@ fn compile(input_file: &Path, args: &Args) -> anyhow::Result<()> {
 
     let assembly_file = input_file.with_extension("s");
     std::fs::write(&assembly_file, code).context("Failed to write assembly file")?;
-    build(&assembly_file)?;
+    build(&assembly_file, args.c)?;
 
     Ok(())
 }
 
 #[allow(unused)]
-fn build(assembly_file: &Path) -> anyhow::Result<()> {
-    let output_file = assembly_file.with_extension("");
-    let status = Command::new("gcc")
+fn build(assembly_file: &Path, skip_linker: bool) -> anyhow::Result<()> {
+    let mut status = Command::new("gcc");
+    let (output_file, status) = if skip_linker {
+        (assembly_file.with_extension("o"), status.arg("-c"))
+    } else {
+        (assembly_file.with_extension(""), &mut status)
+    };
+    let status = status
         .arg(assembly_file)
         .arg("-o")
         .arg(output_file)
