@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+use miette::LabeledSpan;
 use strum::EnumProperty;
 use strum_macros::EnumProperty;
 
@@ -6,19 +7,22 @@ use crate::lexer::{Token, TokenKind};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
-    pub function_definition: Function,
+    pub function_declarations: Vec<Function>,
 }
 
 impl Program {
-    pub fn iter(&self) -> BlockIterator {
-        self.function_definition.body.iter()
+    pub fn iter(&self) -> std::slice::Iter<Function> {
+        self.function_declarations.iter()
     }
 }
+
+pub type Identifier = String;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Function {
     pub name: String,
-    pub body: Block,
+    pub params: Vec<Identifier>,
+    pub body: Option<Block>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -111,13 +115,19 @@ pub enum Statement {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ForInit {
-    Declaration(Declaration),
+    Declaration(VarDecl),
     Expression(Option<Exp>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Declaration {
-    pub name: String,
+pub enum Declaration {
+    Function(Function),
+    Var(VarDecl),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct VarDecl {
+    pub name: Identifier,
     pub init: Option<Exp>,
 }
 
@@ -129,6 +139,7 @@ pub enum Exp {
     Unary(UnaryOperator, Box<Exp>),
     BinaryOperation(BinaryOperator, Box<Exp>, Box<Exp>),
     Conditional(Box<Exp>, Box<Exp>, Box<Exp>),
+    FunctionCall(Identifier, Vec<Exp>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -185,81 +196,140 @@ impl BinaryOperator {
 }
 
 pub struct Parser<'a> {
+    source: &'a str,
     tokens: &'a [Token<'a>],
 }
 
 impl<'a> Parser<'a> {
-    pub fn new(tokens: &'a [Token<'a>]) -> Parser<'a> {
-        Parser { tokens }
+    pub fn new(source: &'a str, tokens: &'a [Token<'a>]) -> Parser<'a> {
+        Parser { source, tokens }
     }
 
-    pub fn run(&mut self) -> anyhow::Result<Program> {
+    pub fn run(&mut self) -> miette::Result<Program> {
         self.parse_program()
     }
 
-    pub fn parse_program(&mut self) -> anyhow::Result<Program> {
-        let function = self.parse_function()?;
+    pub fn parse_program(&mut self) -> miette::Result<Program> {
+        let mut function_declarations = vec![];
+        while self.peek() != Some(TokenKind::Eof) {
+            let function = self.parse_function_decl(None)?;
+            function_declarations.push(function);
+        }
+        self.expect(TokenKind::Eof, "program")?;
+
         let program = Program {
-            function_definition: function,
+            function_declarations,
         };
-        self.expect(TokenKind::Eof)?;
         Ok(program)
     }
 
-    pub fn parse_function(&mut self) -> anyhow::Result<Function> {
-        self.expect(TokenKind::IntKeyword)?;
-        let name = self.parse_identifier()?;
-        self.expect(TokenKind::OpenParen)?;
-        self.expect(TokenKind::Void)?;
-        self.expect(TokenKind::CloseParen)?;
-        let body = self.parse_block()?;
+    pub fn parse_function_decl(&mut self, name: Option<Identifier>) -> miette::Result<Function> {
+        let name = match name {
+            Some(name) => name,
+            None => {
+                self.expect(
+                    TokenKind::IntKeyword,
+                    format!("function declaration: {name:?}"),
+                )?;
+                self.parse_identifier()?
+            }
+        };
+        self.expect(TokenKind::OpenParen, format!("function {name} declaration"))?;
+        let params = self.parse_param_list()?;
+        self.expect(
+            TokenKind::CloseParen,
+            format!("function {name} declaration"),
+        )?;
+        let body = if self.peek() == Some(TokenKind::Semicolon) {
+            self.take_token(); // skips Semicolon
+            None
+        } else {
+            Some(self.parse_block()?)
+        };
 
-        Ok(Function { name, body })
+        Ok(Function { name, params, body })
     }
 
-    pub fn parse_block(&mut self) -> anyhow::Result<Block> {
-        self.expect(TokenKind::OpenBrace)?;
+    pub fn parse_param_list(&mut self) -> miette::Result<Vec<Identifier>> {
+        let mut params = vec![];
+        if self.peek() == Some(TokenKind::Void) {
+            self.take_token();
+        } else if self.peek() == Some(TokenKind::IntKeyword) {
+            loop {
+                self.expect(TokenKind::IntKeyword, "parameter")?;
+                let name = self.parse_identifier()?;
+                params.push(name);
+                if self.peek() != Some(TokenKind::Comma) {
+                    break;
+                }
+                self.take_token(); // skips Comma
+            }
+        }
+        Ok(params)
+    }
+
+    pub fn parse_block(&mut self) -> miette::Result<Block> {
+        self.expect(TokenKind::OpenBrace, "block")?;
         let mut items = vec![];
         while self.peek() != Some(TokenKind::CloseBrace) {
             let next_block_item = self.parse_block_item()?;
             items.push(next_block_item);
         }
-        self.expect(TokenKind::CloseBrace)?;
+        self.expect(TokenKind::CloseBrace, "block")?;
 
         Ok(Block { items })
     }
 
-    pub fn parse_block_item(&mut self) -> anyhow::Result<BlockItem> {
+    pub fn parse_block_item(&mut self) -> miette::Result<BlockItem> {
         if self.peek() == Some(TokenKind::IntKeyword) {
-            self.take_token();
-            let name = self.parse_identifier()?;
+            Ok(BlockItem::Declaration(self.parse_declaration()?))
+        } else {
+            Ok(BlockItem::Statement(self.parse_statement()?))
+        }
+    }
+
+    pub fn parse_declaration(&mut self) -> miette::Result<Declaration> {
+        self.expect(TokenKind::IntKeyword, "declaration")?;
+        let name = self.parse_identifier()?;
+        if self.peek() == Some(TokenKind::OpenParen) {
+            let function_decl = self.parse_function_decl(Some(name))?;
+            Ok(Declaration::Function(function_decl))
+        } else {
             let init = if self.peek() == Some(TokenKind::Equal) {
                 self.take_token();
                 Some(self.parse_exp(None)?)
             } else {
                 None
             };
-            self.expect(TokenKind::Semicolon)?;
-            Ok(BlockItem::Declaration(Declaration { name, init }))
-        } else {
-            Ok(BlockItem::Statement(self.parse_statement()?))
+            self.expect(TokenKind::Semicolon, format!("variable {name} declaration"))?;
+            Ok(Declaration::Var(VarDecl { name, init }))
         }
     }
 
-    pub fn parse_identifier(&mut self) -> anyhow::Result<String> {
+    pub fn parse_identifier(&mut self) -> miette::Result<String> {
         if let TokenKind::Identifier(name) = &self.tokens[0].kind {
             self.tokens = &self.tokens[1..];
             Ok(name.to_string())
         } else {
-            anyhow::bail!("Expected identifier, found {:?}", self.tokens[0]);
+            if let Some(token) = self.peek_token() {
+                return Err(miette::miette! {
+                    labels = vec![
+                        LabeledSpan::at(token.offset..token.offset + token.len(), "found this")
+                    ],
+                    "Expected identifier",
+                }
+                .with_source_code(self.source.to_string()));
+            }
+
+            miette::bail!("Expected identifier, found {:?}", self.tokens[0]);
         }
     }
 
-    pub fn parse_statement(&mut self) -> anyhow::Result<Statement> {
+    pub fn parse_statement(&mut self) -> miette::Result<Statement> {
         if self.peek() == Some(TokenKind::Return) {
             self.take_token(); // skips Return
             let return_val = self.parse_exp(None)?;
-            self.expect(TokenKind::Semicolon)?;
+            self.expect(TokenKind::Semicolon, "return statement")?;
             Ok(Statement::Return(return_val))
         } else if self.peek() == Some(TokenKind::Semicolon) {
             self.take_token(); // skips Semicolon
@@ -268,9 +338,9 @@ impl<'a> Parser<'a> {
             Ok(Statement::Compound(self.parse_block()?))
         } else if self.peek() == Some(TokenKind::If) {
             self.take_token(); // skips If
-            self.expect(TokenKind::OpenParen)?;
+            self.expect(TokenKind::OpenParen, "if statement")?;
             let condition = self.parse_exp(None)?;
-            self.expect(TokenKind::CloseParen)?;
+            self.expect(TokenKind::CloseParen, "if statement")?;
             let then_statement = Box::new(self.parse_statement()?);
             let else_statement = if self.peek() == Some(TokenKind::Else) {
                 self.take_token(); // skips Else
@@ -282,17 +352,17 @@ impl<'a> Parser<'a> {
             Ok(Statement::If(condition, then_statement, else_statement))
         } else if self.peek() == Some(TokenKind::Break) {
             self.take_token(); // skips Break
-            self.expect(TokenKind::Semicolon)?;
+            self.expect(TokenKind::Semicolon, "break statement")?;
             Ok(Statement::Break(None))
         } else if self.peek() == Some(TokenKind::Continue) {
             self.take_token(); // skips Continue
-            self.expect(TokenKind::Semicolon)?;
+            self.expect(TokenKind::Semicolon, "continue statement")?;
             Ok(Statement::Continue(None))
         } else if self.peek() == Some(TokenKind::While) {
             self.take_token(); // skips While
-            self.expect(TokenKind::OpenParen)?;
+            self.expect(TokenKind::OpenParen, "while statement")?;
             let condition = self.parse_exp(None)?;
-            self.expect(TokenKind::CloseParen)?;
+            self.expect(TokenKind::CloseParen, "while statement")?;
             let body = Box::new(self.parse_statement()?);
             Ok(Statement::While {
                 condition,
@@ -302,38 +372,34 @@ impl<'a> Parser<'a> {
         } else if self.peek() == Some(TokenKind::Do) {
             self.take_token(); // skips Do
             let body = Box::new(self.parse_statement()?);
-            self.expect(TokenKind::While)?;
-            self.expect(TokenKind::OpenParen)?;
+            self.expect(TokenKind::While, "do while statement")?;
+            self.expect(TokenKind::OpenParen, "do while statement")?;
             let condition = self.parse_exp(None)?;
-            self.expect(TokenKind::CloseParen)?;
-            self.expect(TokenKind::Semicolon)?;
+            self.expect(TokenKind::CloseParen, "do while statement")?;
+            self.expect(TokenKind::Semicolon, "do while statement")?;
             Ok(Statement::DoWhile {
                 body,
                 condition,
                 label: None,
             })
         } else if self.peek() == Some(TokenKind::For) {
-            println!("Parsing for...");
             self.take_token(); // skips For
-            self.expect(TokenKind::OpenParen)?;
+            self.expect(TokenKind::OpenParen, "for statement")?;
             let init = match self.peek() {
                 Some(TokenKind::Semicolon) => None,
                 _ => Some(self.parse_for_init()?),
             };
-            println!("Parsed init: {:?}", init);
-            self.expect(TokenKind::Semicolon)?;
+            self.expect(TokenKind::Semicolon, "for statement")?;
             let condition = match self.peek() {
                 Some(TokenKind::Semicolon) => None,
                 _ => Some(self.parse_exp(None)?),
             };
-            println!("Parsed condition: {:?}", condition);
-            self.expect(TokenKind::Semicolon)?;
+            self.expect(TokenKind::Semicolon, "for statement")?;
             let post = match self.peek() {
                 Some(TokenKind::CloseParen) => None,
                 _ => Some(self.parse_exp(None)?),
             };
-            println!("Parsed increment: {:?}", post);
-            self.expect(TokenKind::CloseParen)?;
+            self.expect(TokenKind::CloseParen, "for statement")?;
             let body = Box::new(self.parse_statement()?);
             Ok(Statement::For {
                 init,
@@ -344,12 +410,12 @@ impl<'a> Parser<'a> {
             })
         } else {
             let exp = self.parse_exp(None)?;
-            self.expect(TokenKind::Semicolon)?;
+            self.expect(TokenKind::Semicolon, "expression")?;
             Ok(Statement::Expression(exp))
         }
     }
 
-    pub fn parse_for_init(&mut self) -> anyhow::Result<ForInit> {
+    pub fn parse_for_init(&mut self) -> miette::Result<ForInit> {
         if self.peek() == Some(TokenKind::IntKeyword) {
             self.take_token();
             let name = self.parse_identifier()?;
@@ -359,7 +425,7 @@ impl<'a> Parser<'a> {
             } else {
                 None
             };
-            Ok(ForInit::Declaration(Declaration { name, init }))
+            Ok(ForInit::Declaration(VarDecl { name, init }))
         } else {
             let exp = if self.peek() == Some(TokenKind::Semicolon) {
                 None
@@ -370,7 +436,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn parse_factor(&mut self) -> anyhow::Result<Exp> {
+    pub fn parse_factor(&mut self) -> miette::Result<Exp> {
         let next_token = self.peek();
         if let TokenKind::Int(val) = self.tokens[0].kind {
             self.tokens = &self.tokens[1..];
@@ -385,20 +451,42 @@ impl<'a> Parser<'a> {
         } else if next_token == Some(TokenKind::OpenParen) {
             self.take_token(); // skips OpenParen
             let exp = self.parse_exp(None)?;
-            self.expect(TokenKind::CloseParen)?;
+            self.expect(TokenKind::CloseParen, "expression")?;
             Ok(exp)
-        } else if let TokenKind::Identifier(name) = &self.tokens[0].kind {
-            self.tokens = &self.tokens[1..];
-            Ok(Exp::Var(name.to_string()))
+        } else if let Some(TokenKind::Identifier(name)) = self.peek() {
+            self.take_token();
+            if self.peek() == Some(TokenKind::OpenParen) {
+                self.take_token();
+                let args = self.parse_arg_list()?;
+                self.expect(TokenKind::CloseParen, "function call")?;
+                Ok(Exp::FunctionCall(name, args))
+            } else {
+                Ok(Exp::Var(name.to_string()))
+            }
         } else {
-            anyhow::bail!(
+            miette::bail!(
                 "Expected constant or unary operator, found {}",
                 self.tokens[0].origin
             );
         }
     }
 
-    pub fn parse_exp(&mut self, min_prec: Option<u8>) -> anyhow::Result<Exp> {
+    pub fn parse_arg_list(&mut self) -> miette::Result<Vec<Exp>> {
+        let mut args = vec![];
+        if self.peek() != Some(TokenKind::CloseParen) {
+            loop {
+                let arg = self.parse_exp(None)?;
+                args.push(arg);
+                if self.peek() != Some(TokenKind::Comma) {
+                    break;
+                }
+                self.take_token(); // skips Comma
+            }
+        }
+        Ok(args)
+    }
+
+    pub fn parse_exp(&mut self, min_prec: Option<u8>) -> miette::Result<Exp> {
         let mut left = self.parse_factor()?;
 
         loop {
@@ -417,7 +505,7 @@ impl<'a> Parser<'a> {
             } else if next_token == TokenKind::QuestionMark {
                 self.take_token();
                 let true_exp = self.parse_exp(None)?;
-                self.expect(TokenKind::Colon)?;
+                self.expect(TokenKind::Colon, "for statement")?;
                 let false_exp = self.parse_exp(Some(precedence(&next_token)))?;
                 left = Exp::Conditional(Box::new(left), Box::new(true_exp), Box::new(false_exp));
             } else {
@@ -433,9 +521,9 @@ impl<'a> Parser<'a> {
         Ok(left)
     }
 
-    pub fn parse_binary_operator(&mut self) -> anyhow::Result<Option<BinaryOperator>> {
+    pub fn parse_binary_operator(&mut self) -> miette::Result<Option<BinaryOperator>> {
         let Some(next_token) = self.peek() else {
-            anyhow::bail!("Expected binary operator, found end of file");
+            miette::bail!("Expected binary operator, found end of file");
         };
 
         match next_token {
@@ -515,7 +603,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn parse_unary_operator(&mut self) -> anyhow::Result<UnaryOperator> {
+    pub fn parse_unary_operator(&mut self) -> miette::Result<UnaryOperator> {
         match self.tokens[0].kind {
             TokenKind::Tilde => {
                 self.tokens = &self.tokens[1..];
@@ -529,25 +617,48 @@ impl<'a> Parser<'a> {
                 self.tokens = &self.tokens[1..];
                 Ok(UnaryOperator::Not)
             }
-            _ => anyhow::bail!("Expected unary operator, found {}", self.tokens[0].origin),
+            _ => miette::bail!("Expected unary operator, found {}", self.tokens[0].origin),
         }
     }
 
-    pub fn expect(&mut self, expected: TokenKind) -> anyhow::Result<()> {
+    pub fn expect(
+        &mut self,
+        expected: TokenKind,
+        context: impl ToString + std::fmt::Display,
+    ) -> miette::Result<()> {
         if self.tokens.is_empty() {
-            anyhow::bail!("Unexpected end of input");
+            miette::bail!("Unexpected end of input");
         }
 
         if self.tokens[0].kind == expected {
             self.tokens = &self.tokens[1..];
             Ok(())
         } else {
-            anyhow::bail!("Expected {:?}, found {:?}", expected, self.tokens[0]);
+            if let Some(token) = self.peek_token() {
+                return Err(miette::miette! {
+                    labels = vec![
+                        LabeledSpan::at(token.offset..token.offset + token.len(), "here")
+                    ],
+                    "Expected {:?}, found {:?} while parsing {context}",
+                    expected, self.tokens[0],
+                }
+                .with_source_code(self.source.to_string()));
+            }
+
+            miette::bail!(
+                "Expected {:?}, found {:?} while parsing {context}",
+                expected,
+                self.tokens[0],
+            );
         }
     }
 
     fn peek(&self) -> Option<TokenKind> {
         self.tokens.first().map(|t| t.kind.clone())
+    }
+
+    fn peek_token(&self) -> Option<&Token> {
+        self.tokens.first()
     }
 
     fn take_token(&mut self) {
@@ -583,7 +694,7 @@ mod tests {
         let input = "1 * 2 - 3 * (4 + 5)";
         let mut lexer = Lexer::new(input);
         let tokens = lexer.run().unwrap();
-        let mut parser = Parser::new(&tokens);
+        let mut parser = Parser::new(input, &tokens);
         let exp = parser.parse_exp(None).unwrap();
 
         let expected = Exp::BinaryOperation(
@@ -623,18 +734,19 @@ mod tests {
         "#;
         let mut lexer = Lexer::new(input);
         let tokens = lexer.run().unwrap();
-        let mut parser = Parser::new(&tokens);
+        let mut parser = Parser::new(input, &tokens);
         let ast = parser.run().unwrap();
 
         let expected = Program {
-            function_definition: Function {
+            function_declarations: vec![Function {
                 name: "main".to_string(),
-                body: Block {
+                params: vec![],
+                body: Some(Block {
                     items: vec![
-                        BlockItem::Declaration(Declaration {
+                        BlockItem::Declaration(Declaration::Var(VarDecl {
                             name: "x".to_string(),
                             init: None,
-                        }),
+                        })),
                         BlockItem::Statement(Statement::Compound(Block {
                             items: vec![BlockItem::Statement(Statement::Expression(
                                 Exp::Assignment(
@@ -649,8 +761,8 @@ mod tests {
                             )))],
                         })),
                     ],
-                },
-            },
+                }),
+            }],
         };
 
         assert_eq!(ast, expected);
@@ -672,7 +784,7 @@ mod tests {
         "#;
         let mut lexer = Lexer::new(input);
         let tokens = lexer.run().unwrap();
-        let mut parser = Parser::new(&tokens);
+        let mut parser = Parser::new(input, &tokens);
         let ast = parser.run().unwrap();
 
         println!("{:?}", ast);
@@ -696,7 +808,7 @@ mod tests {
         "#;
         let mut lexer = Lexer::new(input);
         let tokens = lexer.run().unwrap();
-        let mut parser = Parser::new(&tokens);
+        let mut parser = Parser::new(input, &tokens);
         let ast = parser.run().unwrap();
 
         println!("{:?}", ast);

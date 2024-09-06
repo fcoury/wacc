@@ -387,14 +387,14 @@ impl Assembler {
         Assembler { program }
     }
 
-    pub fn assemble(&self) -> anyhow::Result<Program> {
+    pub fn assemble(&self) -> miette::Result<Program> {
         let program = self.program.clone().into();
         let program = self.replace_pseudoregisters(program);
         let program = self.fixup_instructions(program);
         Ok(program)
     }
 
-    pub fn run(&self) -> anyhow::Result<String> {
+    pub fn run(&self) -> miette::Result<String> {
         let program = self.assemble()?;
         Ok(program.to_string())
     }

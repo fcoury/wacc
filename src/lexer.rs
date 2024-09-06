@@ -1,3 +1,4 @@
+use miette::LabeledSpan;
 use regex::Regex;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
@@ -7,6 +8,12 @@ pub struct Token<'a> {
     pub kind: TokenKind,
     pub origin: &'a str,
     pub offset: usize,
+}
+
+impl Token<'_> {
+    pub fn len(&self) -> usize {
+        self.origin.len()
+    }
 }
 
 #[derive(EnumIter, Debug, PartialEq, Clone)]
@@ -56,6 +63,7 @@ pub enum TokenKind {
     CloseParen,
     CloseBrace,
     Semicolon,
+    Comma,
 
     // then identifiers and constants
     Identifier(String),
@@ -100,6 +108,7 @@ impl TokenKind {
             TokenKind::OpenBrace => Some(Regex::new(r"^\{").unwrap()),
             TokenKind::CloseBrace => Some(Regex::new(r"^\}").unwrap()),
             TokenKind::Semicolon => Some(Regex::new(r"^;").unwrap()),
+            TokenKind::Comma => Some(Regex::new(r"^,").unwrap()),
             TokenKind::Ampersand => Some(Regex::new(r"^&").unwrap()),
             TokenKind::Pipe => Some(Regex::new(r"^\|").unwrap()),
             TokenKind::Caret => Some(Regex::new(r"^\^").unwrap()),
@@ -124,7 +133,7 @@ impl<'a> Lexer<'a> {
         Self { input, pos: 0 }
     }
 
-    pub fn run(&mut self) -> anyhow::Result<Vec<Token>> {
+    pub fn run(&mut self) -> miette::Result<Vec<Token>> {
         let mut tokens = vec![];
         while self.pos < self.input.len() {
             self.skip_whitespace();
@@ -163,11 +172,13 @@ impl<'a> Lexer<'a> {
             }
 
             if !matched {
-                return Err(anyhow::anyhow!(
-                    "No token matched matched at position {}: {}",
-                    self.pos,
-                    self.input[self.pos..].trim()
-                ));
+                return Err(miette::miette! {
+                    labels = vec![
+                        LabeledSpan::at(self.pos..self.pos+1, "here"),
+                    ],
+                    "No token matched",
+                }
+                .with_source_code(self.input.to_string()));
             }
         }
 
