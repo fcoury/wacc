@@ -32,10 +32,10 @@ pub struct Function {
     pub instructions: Vec<Instruction>,
 }
 
-impl TryFrom<parser::Function> for Function {
+impl TryFrom<parser::FunctionDecl> for Function {
     type Error = miette::Error;
 
-    fn try_from(function: parser::Function) -> miette::Result<Self> {
+    fn try_from(function: parser::FunctionDecl) -> miette::Result<Self> {
         let mut context = Context::new();
         Ok(Function {
             name: function.name.clone(),
@@ -60,7 +60,7 @@ trait IntoInstructions {
     fn into_instructions(self, context: &mut Context) -> miette::Result<Vec<Instruction>>;
 }
 
-impl IntoInstructions for parser::Function {
+impl IntoInstructions for parser::FunctionDecl {
     fn into_instructions(self, context: &mut Context) -> miette::Result<Vec<Instruction>> {
         if let Some(body) = self.body {
             let mut instructions = body.into_instructions(context)?;
@@ -331,11 +331,7 @@ pub fn emit_assignment(
     val
 }
 
-pub fn emit_ir(
-    exp: parser::Exp,
-    instructions: &mut Vec<Instruction>,
-    context: &mut Context,
-) -> Val {
+pub fn emit_ir(exp: parser::Exp, instructions: &mut [Instruction], context: &mut Context) -> Val {
     todo!()
     // match exp {
     //     parser::Exp::Var(name) => Val::Var(name),
@@ -597,7 +593,7 @@ mod tests {
     #[test]
     fn test_constant() {
         let program = parser::Program {
-            function_declarations: vec![parser::Function {
+            function_declarations: vec![parser::FunctionDecl {
                 name: "main".to_string(),
                 params: vec![],
                 body: Some(Block {
@@ -619,7 +615,7 @@ mod tests {
     #[test]
     fn test_unary_var_var() {
         let program = parser::Program {
-            function_declarations: vec![parser::Function {
+            function_declarations: vec![parser::FunctionDecl {
                 name: "main".to_string(),
                 params: vec![],
                 body: Some(Block {

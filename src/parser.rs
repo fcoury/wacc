@@ -1,4 +1,6 @@
 #![allow(dead_code)]
+use std::fmt;
+
 use miette::LabeledSpan;
 use strum::EnumProperty;
 use strum_macros::EnumProperty;
@@ -7,11 +9,11 @@ use crate::lexer::{Token, TokenKind};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
-    pub function_declarations: Vec<Function>,
+    pub function_declarations: Vec<FunctionDecl>,
 }
 
 impl Program {
-    pub fn iter(&self) -> std::slice::Iter<Function> {
+    pub fn iter(&self) -> std::slice::Iter<FunctionDecl> {
         self.function_declarations.iter()
     }
 }
@@ -19,10 +21,26 @@ impl Program {
 pub type Identifier = String;
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Function {
+pub struct FunctionDecl {
     pub name: String,
-    pub params: Vec<Identifier>,
+    pub params: Vec<VarDecl>,
     pub body: Option<Block>,
+}
+
+impl fmt::Display for FunctionDecl {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "FunctionDecl {} (", self.name)?;
+        for param in &self.params {
+            write!(f, "{} ", param.name)?;
+        }
+        write!(f, ")")?;
+        if let Some(body) = &self.body {
+            for item in body {
+                write!(f, "\n  {}", item)?;
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -83,6 +101,19 @@ pub enum BlockItem {
     Statement(Statement),
 }
 
+impl fmt::Display for BlockItem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BlockItem::Declaration(declaration) => {
+                write!(f, "{}", declaration)
+            }
+            BlockItem::Statement(statement) => {
+                write!(f, "{}", statement)
+            }
+        }
+    }
+}
+
 pub type Label = Option<String>;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -113,6 +144,65 @@ pub enum Statement {
     Null,
 }
 
+impl fmt::Display for Statement {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Statement::Return(exp) => write!(f, "Return {:?}", exp),
+            Statement::Expression(exp) => write!(f, "{:?}", exp),
+            Statement::If(condition, then_statement, else_statement) => {
+                write!(f, "If {:?} {{\n  {}\n}}", condition, then_statement)?;
+                if let Some(else_statement) = else_statement {
+                    write!(f, " else {{\n  {:?}\n}}", else_statement)?;
+                }
+                Ok(())
+            }
+            Statement::Compound(block) => {
+                for item in block.iter() {
+                    write!(f, "{}", item)?;
+                }
+                Ok(())
+            }
+            Statement::Break(label) => write!(f, "Break {:?}", label),
+            Statement::Continue(label) => write!(f, "Continue {:?}", label),
+            Statement::While {
+                condition,
+                body,
+                label: _,
+            } => write!(f, "While {:?} {{\n  {}\n}}", condition, body),
+            Statement::DoWhile {
+                body,
+                condition,
+                label: _,
+            } => write!(f, "Do {{\n  {:?}\n}} While {:?}", body, condition),
+            Statement::For {
+                init,
+                condition,
+                post,
+                body,
+                label: _,
+            } => {
+                write!(f, "For (")?;
+                if let Some(init) = init {
+                    match init {
+                        ForInit::Declaration(decl) => write!(f, "{:?}", decl)?,
+                        ForInit::Expression(exp) => write!(f, "{:?}", exp)?,
+                    }
+                }
+                write!(f, "; ")?;
+                if let Some(condition) = condition {
+                    write!(f, "{:?}", condition)?;
+                }
+                write!(f, "; ")?;
+                if let Some(post) = post {
+                    write!(f, "{:?}", post)?;
+                }
+                write!(f, ") {{\n  {}\n}}", body)
+            }
+            Statement::Null => write!(f, "Null"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ForInit {
     Declaration(VarDecl),
@@ -121,8 +211,19 @@ pub enum ForInit {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Declaration {
-    Function(Function),
+    Function(FunctionDecl),
     Var(VarDecl),
+}
+
+impl fmt::Display for Declaration {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Declaration::Function(function_decl) => write!(f, "{}", function_decl),
+            Declaration::Var(var_decl) => {
+                write!(f, "VarDecl {} = {:?}", var_decl.name, var_decl.init)
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -223,7 +324,10 @@ impl<'a> Parser<'a> {
         Ok(program)
     }
 
-    pub fn parse_function_decl(&mut self, name: Option<Identifier>) -> miette::Result<Function> {
+    pub fn parse_function_decl(
+        &mut self,
+        name: Option<Identifier>,
+    ) -> miette::Result<FunctionDecl> {
         let name = match name {
             Some(name) => name,
             None => {
@@ -247,10 +351,10 @@ impl<'a> Parser<'a> {
             Some(self.parse_block()?)
         };
 
-        Ok(Function { name, params, body })
+        Ok(FunctionDecl { name, params, body })
     }
 
-    pub fn parse_param_list(&mut self) -> miette::Result<Vec<Identifier>> {
+    pub fn parse_param_list(&mut self) -> miette::Result<Vec<VarDecl>> {
         let mut params = vec![];
         if self.peek() == Some(TokenKind::Void) {
             self.take_token();
@@ -258,7 +362,7 @@ impl<'a> Parser<'a> {
             loop {
                 self.expect(TokenKind::IntKeyword, "parameter")?;
                 let name = self.parse_identifier()?;
-                params.push(name);
+                params.push(VarDecl { name, init: None });
                 if self.peek() != Some(TokenKind::Comma) {
                     break;
                 }
@@ -738,7 +842,7 @@ mod tests {
         let ast = parser.run().unwrap();
 
         let expected = Program {
-            function_declarations: vec![Function {
+            function_declarations: vec![FunctionDecl {
                 name: "main".to_string(),
                 params: vec![],
                 body: Some(Block {

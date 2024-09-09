@@ -95,7 +95,7 @@ fn compile(input_file: &Path, args: &Args) -> miette::Result<()> {
     let ast = parser.run()?;
     println!("\nAST:");
     for line in ast.iter() {
-        println!("{:?}", line);
+        println!("{}", line);
     }
 
     if args.parse {
@@ -103,10 +103,12 @@ fn compile(input_file: &Path, args: &Args) -> miette::Result<()> {
     }
 
     let mut analysis = semantic::Analysis::new(ast);
-    let ast = analysis.run().wrap_err("Failed to validate file")?;
+    let ast = analysis
+        .run()
+        .wrap_err(format!("Error validating {}", args.input.to_string_lossy()))?;
     println!("\nAST after Semantic Pass:");
     for line in ast.iter() {
-        println!("{:?}", line);
+        println!("{}", line);
     }
 
     if args.validate {

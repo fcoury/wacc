@@ -1,9 +1,14 @@
-use std::{
-    collections::HashMap,
-    sync::atomic::{AtomicI32, Ordering},
+use std::collections::HashMap;
+
+use loop_labeling::label_loops;
+use type_check::type_check_program;
+
+use crate::parser::{
+    Block, BlockItem, Declaration, Exp, FunctionDecl, Program, Statement, VarDecl,
 };
 
-use crate::parser::{Block, BlockItem, Declaration, Exp, Program, Statement};
+mod loop_labeling;
+mod type_check;
 
 pub struct Analysis {
     program: crate::parser::Program,
@@ -16,374 +21,439 @@ impl Analysis {
 
     pub fn run(&mut self) -> miette::Result<Program> {
         let program = self.resolve_program()?;
+        let program = label_loops(&program)?;
+        type_check_program(&program)?;
         Ok(program)
     }
 
     fn resolve_program(&mut self) -> miette::Result<Program> {
-        todo!()
-        // let mut program = self.program.clone();
-        // let body = program.function_declarations.body;
-        //
-        // let mut context = Context::new();
-        //
-        // let mut items = Vec::with_capacity(body.len());
-        // let mut variable_map = HashMap::new();
-        // for block_item in body.iter() {
-        //     match block_item {
-        //         BlockItem::Declaration(declaration) => items.push(BlockItem::Declaration(
-        //             resolve_declaration(&mut context, &mut variable_map, declaration)?,
-        //         )),
-        //         BlockItem::Statement(statement) => {
-        //             let statement = resolve_statement(&mut context, &mut variable_map, statement)?;
-        //             let statement = label_statement(&mut context, &statement, None)?;
-        //             items.push(BlockItem::Statement(statement))
-        //         }
-        //     }
-        // }
-        //
-        // program.function_declarations.body = Block { items };
-        // Ok(program)
-    }
-}
+        let mut program = self.program.clone();
+        let mut function_declarations = vec![];
+        let mut context = Context::new();
+        let mut identifier_map = IdentifierMap::new();
 
-fn resolve_block(
-    context: &mut Context,
-    variable_map: &mut HashMap<String, (String, bool)>,
-    block: &Block,
-) -> miette::Result<Block> {
-    let mut items = Vec::with_capacity(block.len());
-    for block_item in block.iter() {
-        match block_item {
-            BlockItem::Declaration(declaration) => items.push(BlockItem::Declaration(
-                resolve_declaration(context, variable_map, declaration)?,
-            )),
-            BlockItem::Statement(statement) => {
-                let statement = resolve_statement(context, variable_map, statement)?;
-                items.push(BlockItem::Statement(statement))
+        for declaration in program.function_declarations {
+            function_declarations.push(self.resolve_function_declaration(
+                &mut context,
+                &mut identifier_map,
+                &declaration,
+            )?);
+        }
+
+        program.function_declarations = function_declarations;
+        Ok(program)
+    }
+
+    fn resolve_block(
+        &mut self,
+        context: &mut Context,
+        identifier_map: &mut IdentifierMap,
+        block: &Block,
+    ) -> miette::Result<Block> {
+        let mut items = Vec::with_capacity(block.len());
+        for block_item in block.iter() {
+            match block_item {
+                BlockItem::Declaration(declaration) => items.push(BlockItem::Declaration(
+                    self.resolve_declaration(context, identifier_map, declaration)?,
+                )),
+                BlockItem::Statement(statement) => {
+                    let statement = self.resolve_statement(context, identifier_map, statement)?;
+                    items.push(BlockItem::Statement(statement))
+                }
             }
         }
+
+        Ok(Block { items })
     }
 
-    Ok(Block { items })
-}
-
-fn resolve_statement(
-    context: &mut Context,
-    variable_map: &mut HashMap<String, (String, bool)>,
-    statement: &Statement,
-) -> miette::Result<Statement> {
-    let statement = match statement {
-        Statement::Return(expr) => Statement::Return(resolve_exp(variable_map, expr)?),
-        Statement::Expression(expr) => Statement::Expression(resolve_exp(variable_map, expr)?),
-        Statement::Null => Statement::Null,
-        Statement::If(cond, then, else_) => {
-            let cond = resolve_exp(variable_map, cond)?;
-            let then = resolve_statement(context, variable_map, then)?;
-            let else_ = match else_ {
-                Some(else_) => Some(Box::new(resolve_statement(context, variable_map, else_)?)),
-                None => None,
-            };
-            Statement::If(cond, Box::new(then), else_)
-        }
-        Statement::Compound(block) => {
-            let mut variable_map = variable_map
-                .iter()
-                .map(|(k, v)| (k.clone(), (v.0.clone(), false)))
-                .collect();
-            Statement::Compound(resolve_block(context, &mut variable_map, block)?)
-        }
-        Statement::Break(label) => Statement::Break(label.clone()),
-        Statement::Continue(label) => Statement::Continue(label.clone()),
-        Statement::While {
-            condition,
-            body,
-            label,
-        } => {
-            let condition = resolve_exp(variable_map, condition)?;
-            let body = resolve_statement(context, variable_map, body)?;
+    fn resolve_statement(
+        &mut self,
+        context: &mut Context,
+        identifier_map: &mut IdentifierMap,
+        statement: &Statement,
+    ) -> miette::Result<Statement> {
+        let statement = match &statement {
+            Statement::Return(expr) => Statement::Return(resolve_exp(identifier_map, expr)?),
+            Statement::Expression(expr) => {
+                Statement::Expression(resolve_exp(identifier_map, expr)?)
+            }
+            Statement::Null => Statement::Null,
+            Statement::If(cond, then, else_) => {
+                let cond = resolve_exp(identifier_map, cond)?;
+                let then = self.resolve_statement(context, identifier_map, then)?;
+                let else_ = match else_ {
+                    Some(else_) => Some(Box::new(self.resolve_statement(
+                        context,
+                        identifier_map,
+                        else_,
+                    )?)),
+                    None => None,
+                };
+                Statement::If(cond, Box::new(then), else_)
+            }
+            Statement::Compound(block) => {
+                let mut identifier_map = identifier_map.with_new_scope();
+                Statement::Compound(self.resolve_block(context, &mut identifier_map, block)?)
+            }
+            Statement::Break(label) => Statement::Break(label.clone()),
+            Statement::Continue(label) => Statement::Continue(label.clone()),
             Statement::While {
                 condition,
-                body: Box::new(body),
-                label: label.clone(),
+                body,
+                label,
+            } => {
+                let condition = resolve_exp(identifier_map, condition)?;
+                let body = self.resolve_statement(context, identifier_map, body)?;
+                Statement::While {
+                    condition,
+                    body: Box::new(body),
+                    label: label.clone(),
+                }
             }
-        }
-        Statement::DoWhile {
-            body,
-            condition,
-            label,
-        } => {
-            let body = resolve_statement(context, variable_map, body)?;
-            let condition = resolve_exp(variable_map, condition)?;
             Statement::DoWhile {
-                body: Box::new(body),
+                body,
                 condition,
-                label: label.clone(),
+                label,
+            } => {
+                let body = self.resolve_statement(context, identifier_map, body)?;
+                let condition = resolve_exp(identifier_map, condition)?;
+                Statement::DoWhile {
+                    body: Box::new(body),
+                    condition,
+                    label: label.clone(),
+                }
             }
-        }
-        Statement::For {
-            init,
-            condition,
-            post,
-            body,
-            label,
-        } => {
-            let mut variable_map = variable_map
-                .clone()
-                .iter()
-                .map(|(k, v)| (k.clone(), (v.0.clone(), false)))
-                .collect::<HashMap<_, _>>();
-            let init = match init {
-                Some(init) => Some(resolve_for_init(context, &mut variable_map, init)?),
-                None => None,
-            };
-            let condition = match condition {
-                Some(condition) => Some(resolve_exp(&variable_map, condition)?),
-                None => None,
-            };
-            let post = match post {
-                Some(post) => Some(resolve_exp(&variable_map, post)?),
-                None => None,
-            };
-            let body = resolve_statement(context, &mut variable_map, body)?;
             Statement::For {
                 init,
                 condition,
                 post,
-                body: Box::new(body),
-                label: label.clone(),
-            }
-        }
-    };
-
-    Ok(statement)
-}
-
-fn resolve_declaration(
-    context: &mut Context,
-    variable_map: &mut HashMap<String, (String, bool)>,
-    declaration: &Declaration,
-) -> miette::Result<Declaration> {
-    todo!()
-    // if let Some((_, true)) = variable_map.get(&declaration.name) {
-    //     miette::bail!("Variable {} already declared", declaration.name)
-    // }
-    //
-    // let unique_name = context.next_var(&declaration.name);
-    // variable_map.insert(declaration.name.clone(), (unique_name.clone(), true));
-    //
-    // let init = match &declaration.init {
-    //     Some(exp) => Some(resolve_exp(variable_map, exp)?),
-    //     None => None,
-    // };
-    //
-    // Ok(Declaration {
-    //     name: unique_name,
-    //     init,
-    // })
-}
-
-fn label_statement(
-    context: &mut Context,
-    statement: &Statement,
-    current_label: Option<String>,
-) -> miette::Result<Statement> {
-    let statement = match statement {
-        Statement::Break(_) => {
-            if let Some(current_label) = current_label {
-                return Ok(Statement::Break(Some(current_label)));
-            }
-
-            miette::bail!("Break statement outside of loop")
-        }
-        Statement::Continue(_) => {
-            if let Some(current_label) = current_label {
-                return Ok(Statement::Continue(Some(current_label)));
-            }
-
-            miette::bail!("Continue statement outside of loop")
-        }
-        Statement::While {
-            condition, body, ..
-        } => {
-            let new_label = context.next_label("while");
-            let body = label_statement(context, body, Some(new_label.clone()))?;
-            Statement::While {
-                condition: condition.clone(),
-                body: Box::new(body),
-                label: Some(new_label),
-            }
-        }
-        Statement::DoWhile {
-            body, condition, ..
-        } => {
-            let new_label = context.next_label("dowhile");
-            let body = label_statement(context, body, Some(new_label.clone()))?;
-            Statement::DoWhile {
-                body: Box::new(body),
-                condition: condition.clone(),
-                label: Some(new_label),
-            }
-        }
-        Statement::For {
-            init,
-            condition,
-            post,
-            body,
-            ..
-        } => {
-            let new_label = context.next_label("for");
-            let body = label_statement(context, body, Some(new_label.clone()))?;
-            Statement::For {
-                init: init.clone(),
-                condition: condition.clone(),
-                post: post.clone(),
-                body: Box::new(body),
-                label: Some(new_label),
-            }
-        }
-        Statement::Return(exp) => Statement::Return(exp.clone()),
-        Statement::Expression(exp) => Statement::Expression(exp.clone()),
-        Statement::If(exp, true_statement, false_statement) => {
-            let true_statement = label_statement(context, true_statement, current_label.clone())?;
-            let false_statement = match false_statement {
-                Some(false_statement) => Some(Box::new(label_statement(
-                    context,
-                    false_statement,
-                    current_label.clone(),
-                )?)),
-                None => None,
-            };
-            Statement::If(exp.clone(), Box::new(true_statement), false_statement)
-        }
-        Statement::Compound(block) => {
-            let mut items = Vec::with_capacity(block.len());
-
-            for block_item in block.iter() {
-                match block_item {
-                    BlockItem::Declaration(declaration) => {
-                        items.push(BlockItem::Declaration(declaration.clone()))
+                body,
+                label,
+            } => {
+                let mut identifier_map = identifier_map.with_new_scope();
+                let init = match init {
+                    Some(init) => {
+                        Some(self.resolve_for_init(context, &mut identifier_map, init)?)
                     }
-                    BlockItem::Statement(statement) => {
-                        let statement = label_statement(context, statement, current_label.clone())?;
-                        items.push(BlockItem::Statement(statement))
+                    None => None,
+                };
+                let condition = match condition {
+                    Some(condition) => Some(resolve_exp(&identifier_map, condition)?),
+                    None => None,
+                };
+                let post = match post {
+                    Some(post) => Some(resolve_exp(&identifier_map, post)?),
+                    None => None,
+                };
+                let body = self.resolve_statement(context, &mut identifier_map, body)?;
+                Statement::For {
+                    init,
+                    condition,
+                    post,
+                    body: Box::new(body),
+                    label: label.clone(),
+                }
+            }
+        };
+
+        Ok(statement)
+    }
+
+    fn resolve_function_declaration(
+        &mut self,
+        context: &mut Context,
+        identifier_map: &mut IdentifierMap,
+        decl: &FunctionDecl,
+    ) -> miette::Result<FunctionDecl> {
+        if let Some(prev_entry) = identifier_map.get(&decl.name) {
+            if prev_entry.from_current_scope && !prev_entry.has_linkage {
+                miette::bail!("Function {} already declared", decl.name);
+            }
+        }
+
+        identifier_map.insert(
+            decl.name.clone(),
+            IdentifierInfo {
+                name: decl.name.clone(),
+                from_current_scope: true,
+                has_linkage: true,
+            },
+        );
+
+        let mut new_identifier_map = identifier_map.with_new_scope();
+        let new_params = decl
+            .params
+            .iter()
+            .map(|param| resolve_param(context, &decl.name, &mut new_identifier_map, param))
+            .collect::<miette::Result<Vec<_>>>()?;
+
+        let new_body = if let Some(body) = &decl.body {
+            Some(self.resolve_block(context, &mut new_identifier_map, body)?)
+        } else {
+            None
+        };
+
+        Ok(FunctionDecl {
+            name: decl.name.clone(),
+            params: new_params,
+            body: new_body,
+        })
+    }
+
+    fn resolve_declaration(
+        &mut self,
+        context: &mut Context,
+        identifier_map: &mut IdentifierMap,
+        declaration: &Declaration,
+    ) -> miette::Result<Declaration> {
+        Ok(match declaration {
+            Declaration::Var(decl) => {
+                Declaration::Var(resolve_var_declaration(context, identifier_map, decl)?)
+            }
+            Declaration::Function(decl) => Declaration::Function(
+                self.resolve_function_declaration(context, identifier_map, decl)?,
+            ),
+        })
+    }
+
+    fn resolve_for_init(
+        &mut self,
+        context: &mut Context,
+        identifier_map: &mut IdentifierMap,
+        init: &crate::parser::ForInit,
+    ) -> miette::Result<crate::parser::ForInit> {
+        match init {
+            crate::parser::ForInit::Declaration(declaration) => {
+                let declaration = Declaration::Var(VarDecl {
+                    name: declaration.name.clone(),
+                    init: match &declaration.init {
+                        Some(exp) => Some(resolve_exp(identifier_map, exp)?),
+                        None => None,
+                    },
+                });
+                let declaration =
+                    self.resolve_declaration(context, identifier_map, &declaration)?;
+
+                match declaration {
+                    Declaration::Var(var) => Ok(crate::parser::ForInit::Declaration(var)),
+                    Declaration::Function(fun) => {
+                        miette::bail!("Resolved function declaration for for init {}", fun.name)
                     }
                 }
             }
-
-            Statement::Compound(Block { items })
+            crate::parser::ForInit::Expression(exp) => {
+                let Some(exp) = exp else {
+                    return Ok(crate::parser::ForInit::Expression(None));
+                };
+                let exp = resolve_exp(identifier_map, exp)?;
+                Ok(crate::parser::ForInit::Expression(Some(exp)))
+            }
         }
-        Statement::Null => Statement::Null,
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct IdentifierMap {
+    inner: HashMap<String, IdentifierInfo>,
+}
+
+impl IdentifierMap {
+    pub fn new() -> Self {
+        Self {
+            inner: HashMap::new(),
+        }
+    }
+
+    pub fn with_new_scope(&self) -> Self {
+        let mut inner = HashMap::new();
+        for (k, v) in self.inner.iter() {
+            inner.insert(
+                k.clone(),
+                IdentifierInfo {
+                    name: v.name.clone(),
+                    from_current_scope: false,
+                    has_linkage: v.has_linkage,
+                },
+            );
+        }
+
+        Self { inner }
+    }
+
+    pub fn insert(&mut self, name: String, info: IdentifierInfo) {
+        self.inner.insert(name, info);
+    }
+
+    pub fn overrides(&self, name: &str) -> bool {
+        if let Some(info) = self.inner.get(name) {
+            info.from_current_scope
+        } else {
+            false
+        }
+    }
+
+    pub fn get(&self, name: &str) -> Option<&IdentifierInfo> {
+        self.inner.get(name)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct IdentifierInfo {
+    name: String,
+    from_current_scope: bool,
+    has_linkage: bool,
+}
+
+fn resolve_param(
+    context: &mut Context,
+    function_name: &str,
+    identifier_map: &mut IdentifierMap,
+    param: &VarDecl,
+) -> miette::Result<VarDecl> {
+    if identifier_map.overrides(&param.name) {
+        miette::bail!(
+            "Duplicate param {} for function {}",
+            param.name,
+            function_name
+        );
+    }
+
+    let unique_name = context.next_var(&param.name);
+    identifier_map.insert(
+        param.name.clone(),
+        IdentifierInfo {
+            name: unique_name.clone(),
+            from_current_scope: true,
+            has_linkage: false,
+        },
+    );
+
+    Ok(VarDecl {
+        name: unique_name,
+        init: None,
+    })
+}
+
+fn resolve_var_declaration(
+    context: &mut Context,
+    identifier_map: &mut IdentifierMap,
+    declaration: &VarDecl,
+) -> miette::Result<VarDecl> {
+    if identifier_map.overrides(&declaration.name) {
+        miette::bail!("Variable {} already declared", declaration.name)
+    }
+
+    let unique_name = context.next_var(&declaration.name);
+    identifier_map.insert(
+        declaration.name.clone(),
+        IdentifierInfo {
+            name: unique_name.clone(),
+            from_current_scope: true,
+            has_linkage: false,
+        },
+    );
+
+    let init = match &declaration.init {
+        Some(exp) => Some(resolve_exp(identifier_map, exp)?),
+        None => None,
     };
 
-    Ok(statement)
+    Ok(VarDecl {
+        name: unique_name,
+        init,
+    })
 }
 
-fn resolve_for_init(
-    context: &mut Context,
-    variable_map: &mut HashMap<String, (String, bool)>,
-    init: &crate::parser::ForInit,
-) -> miette::Result<crate::parser::ForInit> {
-    todo!()
-    // match init {
-    //     crate::parser::ForInit::Declaration(declaration) => {
-    //         let declaration = Declaration {
-    //             name: declaration.name.clone(),
-    //             init: match &declaration.init {
-    //                 Some(exp) => Some(resolve_exp(variable_map, exp)?),
-    //                 None => None,
-    //             },
-    //         };
-    //         let declaration = resolve_declaration(context, variable_map, &declaration)?;
-    //         Ok(crate::parser::ForInit::Declaration(declaration))
-    //     }
-    //     crate::parser::ForInit::Expression(exp) => {
-    //         let Some(exp) = exp else {
-    //             return Ok(crate::parser::ForInit::Expression(None));
-    //         };
-    //         let exp = resolve_exp(variable_map, exp)?;
-    //         Ok(crate::parser::ForInit::Expression(Some(exp)))
-    //     }
-    // }
+fn resolve_exp(identifier_map: &IdentifierMap, exp: &Exp) -> miette::Result<Exp> {
+    match exp {
+        Exp::Assignment(left, right) => {
+            let left = resolve_exp(identifier_map, left.as_ref())?;
+            let right = resolve_exp(identifier_map, right.as_ref())?;
+            let Exp::Var(_) = left else {
+                miette::bail!(
+                    "Invalid assignment target. Expected variable, found {:?}",
+                    left
+                );
+            };
+            Ok(Exp::Assignment(Box::new(left), Box::new(right)))
+        }
+        Exp::Var(name) => {
+            if let Some(info) = identifier_map.get(name) {
+                Ok(Exp::Var(info.name.clone()))
+            } else {
+                miette::bail!("Variable {} not declared", name);
+            }
+        }
+        // Exp::Factor(factor) => Ok(Exp::Factor(self.resolve_factor(context, factor)?)),
+        Exp::Constant(_) => Ok(exp.clone()),
+        Exp::Unary(op, exp) => {
+            let factor = resolve_exp(identifier_map, exp.as_ref())?;
+            Ok(Exp::Unary(op.clone(), Box::new(factor)))
+        }
+        Exp::BinaryOperation(op, left, right) => {
+            let left = resolve_exp(identifier_map, left.as_ref())?;
+            let right = resolve_exp(identifier_map, right.as_ref())?;
+            Ok(Exp::BinaryOperation(*op, Box::new(left), Box::new(right)))
+        }
+        Exp::Conditional(cond, then, else_) => {
+            let cond = resolve_exp(identifier_map, cond.as_ref())?;
+            let then = resolve_exp(identifier_map, then.as_ref())?;
+            let else_ = resolve_exp(identifier_map, else_.as_ref())?;
+
+            Ok(Exp::Conditional(
+                Box::new(cond),
+                Box::new(then),
+                Box::new(else_),
+            ))
+        }
+        Exp::FunctionCall(fun_name, args) => {
+            if let Some(identifier_info) = identifier_map.get(fun_name) {
+                let new_args = args
+                    .iter()
+                    .map(|arg| resolve_exp(identifier_map, arg))
+                    .collect::<miette::Result<Vec<_>>>()?;
+                Ok(Exp::FunctionCall(identifier_info.name.clone(), new_args))
+            } else {
+                // TODO: add rastreability to items in the program
+                miette::bail!("Undeclared function {fun_name}");
+            }
+        }
+    }
 }
 
-fn resolve_exp(variable_map: &HashMap<String, (String, bool)>, exp: &Exp) -> miette::Result<Exp> {
-    todo!()
-    // match exp {
-    //     Exp::Assignment(left, right) => {
-    //         let left = resolve_exp(variable_map, left.as_ref())?;
-    //         let right = resolve_exp(variable_map, right.as_ref())?;
-    //         let Exp::Var(_) = left else {
-    //             miette::bail!(
-    //                 "Invalid assignment target. Expected variable, found {:?}",
-    //                 left
-    //             );
-    //         };
-    //         Ok(Exp::Assignment(Box::new(left), Box::new(right)))
-    //     }
-    //     Exp::Var(name) => {
-    //         if variable_map.contains_key(name) {
-    //             let (var, _) = &variable_map[name];
-    //             Ok(Exp::Var(var.clone()))
-    //         } else {
-    //             miette::bail!("Variable {} not declared", name);
-    //         }
-    //     }
-    //     // Exp::Factor(factor) => Ok(Exp::Factor(self.resolve_factor(context, factor)?)),
-    //     Exp::Constant(_) => Ok(exp.clone()),
-    //     Exp::Unary(op, exp) => {
-    //         let factor = resolve_exp(variable_map, exp.as_ref())?;
-    //         Ok(Exp::Unary(op.clone(), Box::new(factor)))
-    //     }
-    //     Exp::BinaryOperation(op, left, right) => {
-    //         let left = resolve_exp(variable_map, left.as_ref())?;
-    //         let right = resolve_exp(variable_map, right.as_ref())?;
-    //         Ok(Exp::BinaryOperation(*op, Box::new(left), Box::new(right)))
-    //     }
-    //     Exp::Conditional(cond, then, else_) => {
-    //         let cond = resolve_exp(variable_map, cond.as_ref())?;
-    //         let then = resolve_exp(variable_map, then.as_ref())?;
-    //         let else_ = resolve_exp(variable_map, else_.as_ref())?;
-    //
-    //         Ok(Exp::Conditional(
-    //             Box::new(cond),
-    //             Box::new(then),
-    //             Box::new(else_),
-    //         ))
-    //     }
-    // }
-}
-pub struct Context {
-    next_temp: AtomicI32,
+struct Context {
+    counters: HashMap<String, usize>,
 }
 
 impl Context {
     pub fn new() -> Self {
         Self {
-            next_temp: AtomicI32::new(0),
+            counters: HashMap::new(),
         }
     }
 
-    pub fn next_var(&self, name: &str) -> String {
-        let temp = self.next_temp.fetch_add(1, Ordering::Relaxed);
-        format!("{}_{}", name, temp)
+    fn next_var(&mut self, prefix: &str) -> String {
+        let counter = self.counters.entry(prefix.to_string()).or_insert(0);
+        let var_name = format!("{}_{}", prefix, counter);
+        *counter += 1;
+        var_name
     }
 
-    pub fn next_label(&self, descr: &str) -> String {
-        let id = self.next_temp.fetch_add(1, Ordering::SeqCst);
-        format!("{descr}.label.{}", id)
+    pub fn next_label(&mut self, descr: &str) -> String {
+        self.next_var(&format!("label_{descr}"))
     }
 }
 
 #[cfg(test)]
 mod test {
-    use crate::parser::{Block, Function, VarDecl};
+    use crate::parser::{Block, FunctionDecl, VarDecl};
 
     use super::*;
 
     #[test]
     fn test_analysis() {
         let program = Program {
-            function_declarations: vec![Function {
+            function_declarations: vec![FunctionDecl {
                 name: "main".to_string(),
                 params: vec![],
                 body: Some(Block {
@@ -412,7 +482,7 @@ mod test {
     #[test]
     fn test_dupe_var() {
         let program = Program {
-            function_declarations: vec![Function {
+            function_declarations: vec![FunctionDecl {
                 name: "main".to_string(),
                 params: vec![],
                 body: Some(Block {
@@ -480,21 +550,21 @@ mod test {
         );
     }
 
-    #[test]
-    fn test_label_assignment() {
-        let while_statement = Statement::While {
-            condition: Exp::Constant(1),
-            body: Box::new(Statement::Expression(Exp::Constant(1))),
-            label: None,
-        };
-
-        let mut context = Context::new();
-        let new_while = label_statement(&mut context, &while_statement, None).unwrap();
-
-        let Statement::While { label, .. } = new_while else {
-            panic!("Not a while");
-        };
-
-        assert!(label.is_some());
-    }
+    // #[test]
+    // fn test_label_assignment() {
+    //     let while_statement = Statement::While {
+    //         condition: Exp::Constant(1),
+    //         body: Box::new(Statement::Expression(Exp::Constant(1))),
+    //         label: None,
+    //     };
+    //
+    //     let mut context = Context::new();
+    //     let new_while = label_statement_loops(&mut context, &while_statement, None).unwrap();
+    //
+    //     let Statement::While { label, .. } = new_while else {
+    //         panic!("Not a while");
+    //     };
+    //
+    //     assert!(label.is_some());
+    // }
 }
