@@ -3,6 +3,7 @@ mod ir;
 mod lexer;
 mod parser;
 mod semantic;
+mod utils;
 
 use assembler::Assembler;
 use clap::Parser;

@@ -4,37 +4,44 @@ use std::{
     fmt::{self, Display, Formatter},
 };
 
-use crate::ir;
+use crate::{ir, utils::safe_split_at};
 
 #[derive(Debug, PartialEq)]
 pub struct Program {
-    function_definition: Function,
+    function_definitions: Vec<Function>,
 }
 
 impl Program {
-    pub fn iter(&self) -> std::slice::Iter<'_, Instruction> {
-        self.function_definition.instructions.iter()
+    pub fn iter(&self) -> std::slice::Iter<'_, Function> {
+        self.function_definitions.iter()
     }
 }
 
 impl From<ir::Program> for Program {
     fn from(program: ir::Program) -> Self {
-        todo!()
-        // Program {
-        //     function_definition: program.function_definition.into(),
-        // }
+        Program {
+            function_definitions: program
+                .function_definitions
+                .into_iter()
+                .map(|f| f.into())
+                .collect(),
+        }
     }
 }
 
 impl Display for Program {
     #[cfg(not(target_os = "linux"))]
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "{}", self.function_definition)
+        for def in &self.function_definitions {
+            write!(f, "{}", def);
+        }
     }
 
     #[cfg(target_os = "linux")]
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "{}", self.function_definition);
+        for def in &self.function_definitions {
+            write!(f, "{}", def);
+        }
         writeln!(f, "\t.section .note.GNU-stack,\"\",@progbits")
     }
 }
@@ -45,13 +52,31 @@ pub struct Function {
     pub instructions: Vec<Instruction>,
 }
 
-impl From<ir::FuncDefinition> for Function {
-    fn from(function: ir::FuncDefinition) -> Self {
-        let instructions: Vec<Instruction> = function
-            .instructions
-            .into_iter()
-            .flat_map(Into::<Vec<Instruction>>::into)
-            .collect();
+impl From<ir::Function> for Function {
+    fn from(function: ir::Function) -> Self {
+        let mut instructions = Vec::new();
+
+        for (i, param) in function.params.iter().enumerate() {
+            if i < 6 {
+                instructions.push(Instruction::Mov(
+                    Operand::Reg(ARG_REGISTERS[i]),
+                    Operand::Pseudo(param.clone()),
+                ));
+            } else {
+                instructions.push(Instruction::Mov(
+                    Operand::Stack((i as i32 - 5) * 8),
+                    Operand::Pseudo(param.clone()),
+                ));
+            }
+        }
+
+        instructions.extend(
+            function
+                .instructions
+                .into_iter()
+                .flat_map(Into::<Vec<Instruction>>::into)
+                .collect::<Vec<_>>(),
+        );
 
         Function {
             name: function.name,
@@ -96,12 +121,16 @@ impl Display for Ret {
     }
 }
 
-#[derive(Debug, PartialEq)]
+// Enum for the original registers
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Reg {
     AX,
     CX,
-    CL,
     DX,
+    DI,
+    SI,
+    R8,
+    R9,
     R10,
     R11,
 }
@@ -111,13 +140,141 @@ impl Display for Reg {
         match self {
             Reg::AX => write!(f, "%eax"),
             Reg::CX => write!(f, "%ecx"),
-            Reg::CL => write!(f, "%cl"),
             Reg::DX => write!(f, "%edx"),
+            Reg::DI => write!(f, "%edi"),
+            Reg::SI => write!(f, "%esi"),
+            Reg::R8 => write!(f, "%r8d"),
+            Reg::R9 => write!(f, "%r9d"),
             Reg::R10 => write!(f, "%r10d"),
             Reg::R11 => write!(f, "%r11d"),
         }
     }
 }
+
+// Enum for 8-bit registers
+#[allow(clippy::upper_case_acronyms)]
+#[derive(Debug, PartialEq)]
+pub enum Reg8 {
+    AL,
+    CL,
+    DL,
+    DIL,
+    SIL,
+    R8B,
+    R9B,
+    R10B,
+    R11B,
+}
+
+impl Display for Reg8 {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self {
+            Reg8::AL => write!(f, "%al"),
+            Reg8::CL => write!(f, "%cl"),
+            Reg8::DL => write!(f, "%dl"),
+            Reg8::DIL => write!(f, "%dil"),
+            Reg8::SIL => write!(f, "%sil"),
+            Reg8::R8B => write!(f, "%r8b"),
+            Reg8::R9B => write!(f, "%r9b"),
+            Reg8::R10B => write!(f, "%r10b"),
+            Reg8::R11B => write!(f, "%r11b"),
+        }
+    }
+}
+
+// Enum for 16-bit registers
+#[derive(Debug, PartialEq)]
+pub enum Reg16 {
+    AX,
+    CX,
+    DX,
+    DI,
+    SI,
+    R8W,
+    R9W,
+    R10W,
+    R11W,
+}
+
+impl Display for Reg16 {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self {
+            Reg16::AX => write!(f, "%ax"),
+            Reg16::CX => write!(f, "%cx"),
+            Reg16::DX => write!(f, "%dx"),
+            Reg16::DI => write!(f, "%di"),
+            Reg16::SI => write!(f, "%si"),
+            Reg16::R8W => write!(f, "%r8w"),
+            Reg16::R9W => write!(f, "%r9w"),
+            Reg16::R10W => write!(f, "%r10w"),
+            Reg16::R11W => write!(f, "%r11w"),
+        }
+    }
+}
+
+// Enum for 32-bit registers
+#[allow(clippy::upper_case_acronyms)]
+#[derive(Debug, PartialEq)]
+pub enum Reg32 {
+    EAX,
+    ECX,
+    EDX,
+    EDI,
+    ESI,
+    R8D,
+    R9D,
+    R10D,
+    R11D,
+}
+
+impl Display for Reg32 {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self {
+            Reg32::EAX => write!(f, "%eax"),
+            Reg32::ECX => write!(f, "%ecx"),
+            Reg32::EDX => write!(f, "%edx"),
+            Reg32::EDI => write!(f, "%edi"),
+            Reg32::ESI => write!(f, "%esi"),
+            Reg32::R8D => write!(f, "%r8d"),
+            Reg32::R9D => write!(f, "%r9d"),
+            Reg32::R10D => write!(f, "%r10d"),
+            Reg32::R11D => write!(f, "%r11d"),
+        }
+    }
+}
+
+// Enum for 64-bit registers
+#[allow(clippy::upper_case_acronyms)]
+#[derive(Debug, PartialEq)]
+pub enum Reg64 {
+    RAX,
+    RCX,
+    RDX,
+    RDI,
+    RSI,
+    R8,
+    R9,
+    R10,
+    R11,
+}
+
+impl Display for Reg64 {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self {
+            Reg64::RAX => write!(f, "%rax"),
+            Reg64::RCX => write!(f, "%rcx"),
+            Reg64::RDX => write!(f, "%rdx"),
+            Reg64::RDI => write!(f, "%rdi"),
+            Reg64::RSI => write!(f, "%rsi"),
+            Reg64::R8 => write!(f, "%r8"),
+            Reg64::R9 => write!(f, "%r9"),
+            Reg64::R10 => write!(f, "%r10"),
+            Reg64::R11 => write!(f, "%r11"),
+        }
+    }
+}
+
+const ARG_REGISTERS: [Reg; 6] = [Reg::DI, Reg::SI, Reg::DX, Reg::CX, Reg::R8, Reg::R9];
 
 #[derive(Debug, PartialEq)]
 pub enum Condition {
@@ -142,6 +299,8 @@ impl Display for Condition {
     }
 }
 
+type Identifier = String;
+
 #[derive(Debug, PartialEq)]
 pub enum Instruction {
     Mov(Operand, Operand),
@@ -150,11 +309,14 @@ pub enum Instruction {
     Cmp(Operand, Operand),
     Idiv(Operand),
     Cdq,
-    Jmp(String),
-    JmpCC(Condition, String),
+    Jmp(Identifier),
+    JmpCC(Condition, Identifier),
     SetCC(Condition, Operand),
-    Label(String),
+    Label(Identifier),
     AllocateStack(i32),
+    DeallocateStack(i32),
+    Push(Operand),
+    Call(Identifier),
     Ret(Ret),
 }
 
@@ -191,7 +353,7 @@ impl From<ir::Instruction> for Vec<Instruction> {
                 ir::BinaryOperator::ShiftLeft | ir::BinaryOperator::ShiftRight => vec![
                     Instruction::Mov(src1.into(), dst.clone().into()),
                     Instruction::Mov(src2.into(), Operand::Reg(Reg::CX)),
-                    Instruction::Binary(op.into(), Operand::Reg(Reg::CL), dst.into()),
+                    Instruction::Binary(op.into(), Operand::Reg8(Reg8::CL), dst.into()),
                 ],
                 ir::BinaryOperator::Divide => vec![
                     Instruction::Mov(src1.into(), Operand::Reg(Reg::AX)),
@@ -248,7 +410,51 @@ impl From<ir::Instruction> for Vec<Instruction> {
             ir::Instruction::Jump(target) => vec![Instruction::Jmp(target)],
             ir::Instruction::Label(label) => vec![Instruction::Label(label)],
             ir::Instruction::Copy(src, dst) => vec![Instruction::Mov(src.into(), dst.into())],
-            ir::Instruction::FunCall(_, _, _) => todo!(),
+            ir::Instruction::FunCall(fun_name, args, dst) => {
+                let mut instructions = Vec::new();
+
+                // adjust stack alignment
+                let (register_args, stack_args) = safe_split_at(&args, 6);
+                let stack_padding = if args.len() % 2 == 0 { 0 } else { 8 };
+
+                if stack_padding > 0 {
+                    instructions.push(Instruction::AllocateStack(stack_padding));
+                }
+
+                // pass args in registers
+                for (reg_index, tacky_arg) in register_args.iter().enumerate() {
+                    let r = ARG_REGISTERS[reg_index];
+                    instructions.push(Instruction::Mov(tacky_arg.clone().into(), Operand::Reg(r)));
+                }
+
+                // pass args on stack
+                for tacky_arg in stack_args.iter().rev() {
+                    let assembly_arg = tacky_arg.clone().into();
+                    match assembly_arg {
+                        Operand::Imm(_) => instructions.push(Instruction::Push(assembly_arg)),
+                        Operand::Reg(_) => instructions.push(Instruction::Push(assembly_arg)),
+                        _ => {
+                            instructions
+                                .push(Instruction::Mov(assembly_arg, Operand::Reg(Reg::AX)));
+                            instructions.push(Instruction::Push(Operand::Reg(Reg::AX)));
+                        }
+                    }
+                }
+
+                // emit call instruction
+                instructions.push(Instruction::Call(fun_name));
+
+                // adjust stack pointer
+                let bytes_to_remove = 8 * stack_args.len() as i32 + stack_padding;
+                if bytes_to_remove > 0 {
+                    instructions.push(Instruction::DeallocateStack(bytes_to_remove));
+                }
+
+                // retrieve return value
+                instructions.push(Instruction::Mov(Operand::Reg(Reg::AX), dst.into()));
+
+                instructions
+            }
         }
     }
 }
@@ -356,6 +562,10 @@ impl Display for BinaryOperator {
 pub enum Operand {
     Imm(i32),
     Reg(Reg),
+    Reg8(Reg8),
+    Reg16(Reg16),
+    Reg32(Reg32),
+    Reg64(Reg64),
     Pseudo(String),
     Stack(i32),
 }
@@ -365,6 +575,10 @@ impl Display for Operand {
         match self {
             Operand::Imm(imm) => write!(f, "${}", imm),
             Operand::Reg(reg) => write!(f, "{}", reg),
+            Operand::Reg8(reg) => write!(f, "{}", reg),
+            Operand::Reg16(reg) => write!(f, "{}", reg),
+            Operand::Reg32(reg) => write!(f, "{}", reg),
+            Operand::Reg64(reg) => write!(f, "{}", reg),
             Operand::Pseudo(pseudo) => write!(f, "{}", pseudo),
             Operand::Stack(offset) => write!(f, "{}(%rbp)", offset),
         }
@@ -402,225 +616,266 @@ impl Assembler {
     }
 
     pub fn fixup_instructions(&self, program: Program) -> Program {
-        let instructions = program
-            .function_definition
-            .instructions
+        let function_definitions = program
+            .function_definitions
             .into_iter()
-            .flat_map(|instruction| match instruction {
-                Instruction::Mov(src, dst) => match (src, dst) {
-                    (Operand::Stack(src), Operand::Stack(dst)) => {
-                        vec![
-                            Instruction::Mov(Operand::Stack(src), Operand::Reg(Reg::R10)),
-                            Instruction::Mov(Operand::Reg(Reg::R10), Operand::Stack(dst)),
-                        ]
-                    }
-                    (src, dst) => vec![Instruction::Mov(src, dst)],
-                },
-                Instruction::Idiv(operand) => vec![
-                    Instruction::Mov(operand, Operand::Reg(Reg::R10)),
-                    Instruction::Idiv(Operand::Reg(Reg::R10)),
-                ],
-                Instruction::Binary(op, src1, src2) => match (&op, src1, src2) {
-                    (BinaryOperator::Add, Operand::Stack(src1), Operand::Stack(src2))
-                    | (BinaryOperator::Sub, Operand::Stack(src1), Operand::Stack(src2))
-                    | (BinaryOperator::ShiftLeft, Operand::Stack(src1), Operand::Stack(src2))
-                    | (BinaryOperator::ShiftRight, Operand::Stack(src1), Operand::Stack(src2)) => {
-                        vec![
-                            Instruction::Mov(Operand::Stack(src1), Operand::Reg(Reg::R10)),
-                            Instruction::Binary(op, Operand::Reg(Reg::R10), Operand::Stack(src2)),
-                        ]
-                    }
-                    (BinaryOperator::Mul, src1, Operand::Stack(src2))
-                    | (BinaryOperator::And, src1, Operand::Stack(src2))
-                    | (BinaryOperator::Or, src1, Operand::Stack(src2))
-                    | (BinaryOperator::Xor, src1, Operand::Stack(src2)) => vec![
-                        Instruction::Mov(Operand::Stack(src2), Operand::Reg(Reg::R11)),
-                        Instruction::Binary(op, src1, Operand::Reg(Reg::R11)),
-                        Instruction::Mov(Operand::Reg(Reg::R11), Operand::Stack(src2)),
-                    ],
-                    (op, src1, src2) => vec![Instruction::Binary(*op, src1, src2)],
-                },
-                Instruction::Cmp(Operand::Stack(op1), Operand::Stack(op2)) => vec![
-                    Instruction::Mov(Operand::Stack(op1), Operand::Reg(Reg::R10)),
-                    Instruction::Cmp(Operand::Reg(Reg::R10), Operand::Stack(op2)),
-                ],
-                Instruction::Cmp(op1, Operand::Imm(op2)) => vec![
-                    Instruction::Mov(Operand::Imm(op2), Operand::Reg(Reg::R11)),
-                    Instruction::Cmp(op1, Operand::Reg(Reg::R11)),
-                ],
-                instr => vec![instr],
+            .map(|function| {
+                let instructions = function
+                    .instructions
+                    .into_iter()
+                    .flat_map(|instruction| match instruction {
+                        Instruction::Mov(src, dst) => match (src, dst) {
+                            (Operand::Stack(src), Operand::Stack(dst)) => {
+                                vec![
+                                    Instruction::Mov(Operand::Stack(src), Operand::Reg(Reg::R10)),
+                                    Instruction::Mov(Operand::Reg(Reg::R10), Operand::Stack(dst)),
+                                ]
+                            }
+                            (src, dst) => vec![Instruction::Mov(src, dst)],
+                        },
+                        Instruction::Idiv(operand) => vec![
+                            Instruction::Mov(operand, Operand::Reg(Reg::R10)),
+                            Instruction::Idiv(Operand::Reg(Reg::R10)),
+                        ],
+                        Instruction::Binary(op, src1, src2) => match (&op, src1, src2) {
+                            (BinaryOperator::Add, Operand::Stack(src1), Operand::Stack(src2))
+                            | (BinaryOperator::Sub, Operand::Stack(src1), Operand::Stack(src2))
+                            | (
+                                BinaryOperator::ShiftLeft,
+                                Operand::Stack(src1),
+                                Operand::Stack(src2),
+                            )
+                            | (
+                                BinaryOperator::ShiftRight,
+                                Operand::Stack(src1),
+                                Operand::Stack(src2),
+                            ) => {
+                                vec![
+                                    Instruction::Mov(Operand::Stack(src1), Operand::Reg(Reg::R10)),
+                                    Instruction::Binary(
+                                        op,
+                                        Operand::Reg(Reg::R10),
+                                        Operand::Stack(src2),
+                                    ),
+                                ]
+                            }
+                            (BinaryOperator::Mul, src1, Operand::Stack(src2))
+                            | (BinaryOperator::And, src1, Operand::Stack(src2))
+                            | (BinaryOperator::Or, src1, Operand::Stack(src2))
+                            | (BinaryOperator::Xor, src1, Operand::Stack(src2)) => vec![
+                                Instruction::Mov(Operand::Stack(src2), Operand::Reg(Reg::R11)),
+                                Instruction::Binary(op, src1, Operand::Reg(Reg::R11)),
+                                Instruction::Mov(Operand::Reg(Reg::R11), Operand::Stack(src2)),
+                            ],
+                            (op, src1, src2) => vec![Instruction::Binary(*op, src1, src2)],
+                        },
+                        Instruction::Cmp(Operand::Stack(op1), Operand::Stack(op2)) => vec![
+                            Instruction::Mov(Operand::Stack(op1), Operand::Reg(Reg::R10)),
+                            Instruction::Cmp(Operand::Reg(Reg::R10), Operand::Stack(op2)),
+                        ],
+                        Instruction::Cmp(op1, Operand::Imm(op2)) => vec![
+                            Instruction::Mov(Operand::Imm(op2), Operand::Reg(Reg::R11)),
+                            Instruction::Cmp(op1, Operand::Reg(Reg::R11)),
+                        ],
+                        instr => vec![instr],
+                    })
+                    .collect();
+
+                Function {
+                    name: function.name,
+                    instructions,
+                }
             })
             .collect();
 
         Program {
-            function_definition: Function {
-                name: program.function_definition.name,
-                instructions,
-            },
+            function_definitions,
         }
     }
 
     pub fn replace_pseudoregisters(&self, program: Program) -> Program {
-        let mut stack_offset = 0;
-        let mut stack_map = HashMap::new();
-
-        let mut instructions = program
-            .function_definition
-            .instructions
+        let function_definitions = program
+            .function_definitions
             .into_iter()
-            .map(|instruction| match instruction {
-                Instruction::Mov(src, dst) => {
-                    let src = match src {
-                        Operand::Pseudo(pseudo) => {
-                            if let Some(offset) = stack_map.get(&pseudo) {
-                                Operand::Stack(*offset)
-                            } else {
-                                stack_offset -= 4;
-                                stack_map.insert(pseudo.clone(), stack_offset);
-                                Operand::Stack(stack_offset)
-                            }
-                        }
-                        _ => src,
-                    };
+            .map(|function| {
+                let mut stack_offset = 0;
+                let mut stack_map = HashMap::new();
 
-                    let dst = match dst {
-                        Operand::Pseudo(pseudo) => {
-                            if let Some(offset) = stack_map.get(&pseudo) {
-                                Operand::Stack(*offset)
-                            } else {
-                                stack_offset -= 4;
-                                stack_map.insert(pseudo.clone(), stack_offset);
-                                Operand::Stack(stack_offset)
-                            }
-                        }
-                        _ => dst,
-                    };
+                let mut instructions = function
+                    .instructions
+                    .into_iter()
+                    .map(|instruction| match instruction {
+                        Instruction::Mov(src, dst) => {
+                            let src = match src {
+                                Operand::Pseudo(pseudo) => {
+                                    if let Some(offset) = stack_map.get(&pseudo) {
+                                        Operand::Stack(*offset)
+                                    } else {
+                                        stack_offset -= 4;
+                                        stack_map.insert(pseudo.clone(), stack_offset);
+                                        Operand::Stack(stack_offset)
+                                    }
+                                }
+                                _ => src,
+                            };
 
-                    Instruction::Mov(src, dst)
+                            let dst = match dst {
+                                Operand::Pseudo(pseudo) => {
+                                    if let Some(offset) = stack_map.get(&pseudo) {
+                                        Operand::Stack(*offset)
+                                    } else {
+                                        stack_offset -= 4;
+                                        stack_map.insert(pseudo.clone(), stack_offset);
+                                        Operand::Stack(stack_offset)
+                                    }
+                                }
+                                _ => dst,
+                            };
+
+                            Instruction::Mov(src, dst)
+                        }
+                        Instruction::Unary(op, operand) => {
+                            let operand = match operand {
+                                Operand::Pseudo(pseudo) => {
+                                    if let Some(offset) = stack_map.get(&pseudo) {
+                                        Operand::Stack(*offset)
+                                    } else {
+                                        stack_offset -= 4;
+                                        stack_map.insert(pseudo.clone(), stack_offset);
+                                        Operand::Stack(stack_offset)
+                                    }
+                                }
+                                _ => operand,
+                            };
+
+                            Instruction::Unary(op, operand)
+                        }
+                        Instruction::AllocateStack(size) => {
+                            stack_offset -= size;
+                            Instruction::AllocateStack(size)
+                        }
+                        Instruction::Idiv(operand) => {
+                            let operand = match operand {
+                                Operand::Pseudo(pseudo) => {
+                                    if let Some(offset) = stack_map.get(&pseudo) {
+                                        Operand::Stack(*offset)
+                                    } else {
+                                        stack_offset -= 4;
+                                        stack_map.insert(pseudo.clone(), stack_offset);
+                                        Operand::Stack(stack_offset)
+                                    }
+                                }
+                                _ => operand,
+                            };
+
+                            Instruction::Idiv(operand)
+                        }
+                        Instruction::Cdq => Instruction::Cdq,
+                        Instruction::Binary(op, src1, src2) => {
+                            let src1 = match src1 {
+                                Operand::Pseudo(pseudo) => {
+                                    if let Some(offset) = stack_map.get(&pseudo) {
+                                        Operand::Stack(*offset)
+                                    } else {
+                                        stack_offset -= 4;
+                                        stack_map.insert(pseudo.clone(), stack_offset);
+                                        Operand::Stack(stack_offset)
+                                    }
+                                }
+                                _ => src1,
+                            };
+
+                            let src2 = match src2 {
+                                Operand::Pseudo(pseudo) => {
+                                    if let Some(offset) = stack_map.get(&pseudo) {
+                                        Operand::Stack(*offset)
+                                    } else {
+                                        stack_offset -= 4;
+                                        stack_map.insert(pseudo.clone(), stack_offset);
+                                        Operand::Stack(stack_offset)
+                                    }
+                                }
+                                _ => src2,
+                            };
+
+                            Instruction::Binary(op, src1, src2)
+                        }
+                        Instruction::Cmp(op1, op2) => {
+                            let op1 = match op1 {
+                                Operand::Pseudo(pseudo) => {
+                                    if let Some(offset) = stack_map.get(&pseudo) {
+                                        Operand::Stack(*offset)
+                                    } else {
+                                        stack_offset -= 4;
+                                        stack_map.insert(pseudo.clone(), stack_offset);
+                                        Operand::Stack(stack_offset)
+                                    }
+                                }
+                                _ => op1,
+                            };
+
+                            let op2 = match op2 {
+                                Operand::Pseudo(pseudo) => {
+                                    if let Some(offset) = stack_map.get(&pseudo) {
+                                        Operand::Stack(*offset)
+                                    } else {
+                                        stack_offset -= 4;
+                                        stack_map.insert(pseudo.clone(), stack_offset);
+                                        Operand::Stack(stack_offset)
+                                    }
+                                }
+                                _ => op2,
+                            };
+
+                            Instruction::Cmp(op1, op2)
+                        }
+                        Instruction::SetCC(condition, operand) => {
+                            let operand = match operand {
+                                Operand::Pseudo(pseudo) => {
+                                    if let Some(offset) = stack_map.get(&pseudo) {
+                                        Operand::Stack(*offset)
+                                    } else {
+                                        stack_offset -= 4;
+                                        stack_map.insert(pseudo.clone(), stack_offset);
+                                        Operand::Stack(stack_offset)
+                                    }
+                                }
+                                _ => operand,
+                            };
+
+                            Instruction::SetCC(condition, operand)
+                        }
+                        Instruction::Ret(ret) => Instruction::Ret(ret),
+                        Instruction::Push(operand) => {
+                            let operand = match operand {
+                                Operand::Pseudo(pseudo) => {
+                                    if let Some(offset) = stack_map.get(&pseudo) {
+                                        Operand::Stack(*offset)
+                                    } else {
+                                        stack_offset -= 4;
+                                        stack_map.insert(pseudo.clone(), stack_offset);
+                                        Operand::Stack(stack_offset)
+                                    }
+                                }
+                                _ => operand,
+                            };
+
+                            Instruction::Push(operand)
+                        }
+                        _ => instruction,
+                    })
+                    .collect::<Vec<_>>();
+
+                instructions.insert(0, Instruction::AllocateStack(-stack_offset));
+                Function {
+                    name: function.name,
+                    instructions,
                 }
-                Instruction::Unary(op, operand) => {
-                    let operand = match operand {
-                        Operand::Pseudo(pseudo) => {
-                            if let Some(offset) = stack_map.get(&pseudo) {
-                                Operand::Stack(*offset)
-                            } else {
-                                stack_offset -= 4;
-                                stack_map.insert(pseudo.clone(), stack_offset);
-                                Operand::Stack(stack_offset)
-                            }
-                        }
-                        _ => operand,
-                    };
-
-                    Instruction::Unary(op, operand)
-                }
-                Instruction::AllocateStack(size) => {
-                    stack_offset -= size;
-                    Instruction::AllocateStack(size)
-                }
-                Instruction::Idiv(operand) => {
-                    let operand = match operand {
-                        Operand::Pseudo(pseudo) => {
-                            if let Some(offset) = stack_map.get(&pseudo) {
-                                Operand::Stack(*offset)
-                            } else {
-                                stack_offset -= 4;
-                                stack_map.insert(pseudo.clone(), stack_offset);
-                                Operand::Stack(stack_offset)
-                            }
-                        }
-                        _ => operand,
-                    };
-
-                    Instruction::Idiv(operand)
-                }
-                Instruction::Cdq => Instruction::Cdq,
-                Instruction::Binary(op, src1, src2) => {
-                    let src1 = match src1 {
-                        Operand::Pseudo(pseudo) => {
-                            if let Some(offset) = stack_map.get(&pseudo) {
-                                Operand::Stack(*offset)
-                            } else {
-                                stack_offset -= 4;
-                                stack_map.insert(pseudo.clone(), stack_offset);
-                                Operand::Stack(stack_offset)
-                            }
-                        }
-                        _ => src1,
-                    };
-
-                    let src2 = match src2 {
-                        Operand::Pseudo(pseudo) => {
-                            if let Some(offset) = stack_map.get(&pseudo) {
-                                Operand::Stack(*offset)
-                            } else {
-                                stack_offset -= 4;
-                                stack_map.insert(pseudo.clone(), stack_offset);
-                                Operand::Stack(stack_offset)
-                            }
-                        }
-                        _ => src2,
-                    };
-
-                    Instruction::Binary(op, src1, src2)
-                }
-                Instruction::Cmp(op1, op2) => {
-                    let op1 = match op1 {
-                        Operand::Pseudo(pseudo) => {
-                            if let Some(offset) = stack_map.get(&pseudo) {
-                                Operand::Stack(*offset)
-                            } else {
-                                stack_offset -= 4;
-                                stack_map.insert(pseudo.clone(), stack_offset);
-                                Operand::Stack(stack_offset)
-                            }
-                        }
-                        _ => op1,
-                    };
-
-                    let op2 = match op2 {
-                        Operand::Pseudo(pseudo) => {
-                            if let Some(offset) = stack_map.get(&pseudo) {
-                                Operand::Stack(*offset)
-                            } else {
-                                stack_offset -= 4;
-                                stack_map.insert(pseudo.clone(), stack_offset);
-                                Operand::Stack(stack_offset)
-                            }
-                        }
-                        _ => op2,
-                    };
-
-                    Instruction::Cmp(op1, op2)
-                }
-                Instruction::SetCC(condition, operand) => {
-                    let operand = match operand {
-                        Operand::Pseudo(pseudo) => {
-                            if let Some(offset) = stack_map.get(&pseudo) {
-                                Operand::Stack(*offset)
-                            } else {
-                                stack_offset -= 4;
-                                stack_map.insert(pseudo.clone(), stack_offset);
-                                Operand::Stack(stack_offset)
-                            }
-                        }
-                        _ => operand,
-                    };
-
-                    Instruction::SetCC(condition, operand)
-                }
-                Instruction::Ret(ret) => Instruction::Ret(ret),
-                _ => instruction,
             })
-            .collect::<Vec<_>>();
-
-        instructions.insert(0, Instruction::AllocateStack(-stack_offset));
+            .collect();
 
         Program {
-            function_definition: Function {
-                name: program.function_definition.name,
-                instructions,
-            },
+            function_definitions,
         }
     }
 }

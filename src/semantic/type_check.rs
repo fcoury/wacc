@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use crate::parser::{Block, BlockItem, Declaration, Exp, ForInit, Program, Statement, VarDecl};
 
+#[allow(unused)]
 #[derive(Debug, Clone)]
 struct ScopeInfo {
     info: TypeInfo,

@@ -6,11 +6,11 @@ pub type Identifier = String;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
-    pub function_definitions: Vec<FuncDefinition>,
+    pub function_definitions: Vec<Function>,
 }
 
 impl Program {
-    pub fn iter(&self) -> std::slice::Iter<FuncDefinition> {
+    pub fn iter(&self) -> std::slice::Iter<Function> {
         self.function_definitions.iter()
     }
 }
@@ -32,18 +32,18 @@ impl TryFrom<parser::Program> for Program {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct FuncDefinition {
+pub struct Function {
     pub name: Identifier,
     pub params: Vec<Identifier>,
     pub instructions: Vec<Instruction>,
 }
 
-impl TryFrom<parser::FunctionDecl> for FuncDefinition {
+impl TryFrom<parser::FunctionDecl> for Function {
     type Error = miette::Error;
 
     fn try_from(function: parser::FunctionDecl) -> miette::Result<Self> {
         let mut context = Context::new();
-        Ok(FuncDefinition {
+        Ok(Function {
             name: function.name.clone(),
             params: function
                 .params
