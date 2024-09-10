@@ -133,6 +133,10 @@ fn compile(input_file: &Path, args: &Args) -> miette::Result<()> {
         println!("{:?}", line);
     }
 
+    if args.codegen {
+        return Ok(());
+    }
+
     let code = assembly.to_string();
     println!("Code:\n{}", code);
 

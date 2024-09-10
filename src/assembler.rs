@@ -483,7 +483,10 @@ impl Display for Instruction {
                 write!(f, "\tset{}\t{}", condition, operand)
             }
             Instruction::Label(label) => write!(f, ".L{}:", label),
-            _ => todo!(),
+            Instruction::Push(operand) => write!(f, "\tpushl\t{}", operand),
+            Instruction::Call(identifier) => write!(f, "\tcall\t{}", identifier),
+            Instruction::DeallocateStack(size) => write!(f, "\taddq\t${}, %rsp", size),
+            ins => unimplemented!("{:?}", ins),
         }
     }
 }
@@ -677,6 +680,13 @@ impl Assembler {
                             Instruction::Mov(Operand::Imm(op2), Operand::Reg(Reg::R11)),
                             Instruction::Cmp(op1, Operand::Reg(Reg::R11)),
                         ],
+                        Instruction::AllocateStack(size) => {
+                            if size % 16 == 0 {
+                                vec![Instruction::AllocateStack(size)]
+                            } else {
+                                vec![Instruction::AllocateStack(size + (16 - (size % 16)))]
+                            }
+                        }
                         instr => vec![instr],
                     })
                     .collect();
