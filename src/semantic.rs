@@ -440,7 +440,7 @@ impl Context {
     }
 
     pub fn next_label(&mut self, descr: &str) -> String {
-        self.next_var(&format!("label_{descr}"))
+        self.next_var(descr) // &format!("label_{descr}"))
     }
 }
 

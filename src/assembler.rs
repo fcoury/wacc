@@ -56,6 +56,14 @@ impl From<ir::Function> for Function {
     fn from(function: ir::Function) -> Self {
         let mut instructions = Vec::new();
 
+        println!("converting function: {:?}", function);
+        if function.instructions.is_empty() {
+            return Function {
+                name: function.name,
+                instructions,
+            };
+        }
+
         for (i, param) in function.params.iter().enumerate() {
             if i < 6 {
                 instructions.push(Instruction::Mov(
@@ -135,6 +143,64 @@ pub enum Reg {
     R11,
 }
 
+impl Reg {
+    fn as_8bit(&self) -> Reg8 {
+        match self {
+            Reg::AX => Reg8::AL,
+            Reg::CX => Reg8::CL,
+            Reg::DX => Reg8::DL,
+            Reg::DI => Reg8::DIL,
+            Reg::SI => Reg8::SIL,
+            Reg::R8 => Reg8::R8B,
+            Reg::R9 => Reg8::R9B,
+            Reg::R10 => Reg8::R10B,
+            Reg::R11 => Reg8::R11B,
+        }
+    }
+
+    fn as_16bit(&self) -> Reg16 {
+        match self {
+            Reg::AX => Reg16::AX,
+            Reg::CX => Reg16::CX,
+            Reg::DX => Reg16::DX,
+            Reg::DI => Reg16::DI,
+            Reg::SI => Reg16::SI,
+            Reg::R8 => Reg16::R8W,
+            Reg::R9 => Reg16::R9W,
+            Reg::R10 => Reg16::R10W,
+            Reg::R11 => Reg16::R11W,
+        }
+    }
+
+    fn as_32bit(&self) -> Reg32 {
+        match self {
+            Reg::AX => Reg32::EAX,
+            Reg::CX => Reg32::ECX,
+            Reg::DX => Reg32::EDX,
+            Reg::DI => Reg32::EDI,
+            Reg::SI => Reg32::ESI,
+            Reg::R8 => Reg32::R8D,
+            Reg::R9 => Reg32::R9D,
+            Reg::R10 => Reg32::R10D,
+            Reg::R11 => Reg32::R11D,
+        }
+    }
+
+    fn as_64bit(&self) -> Reg64 {
+        match self {
+            Reg::AX => Reg64::RAX,
+            Reg::CX => Reg64::RCX,
+            Reg::DX => Reg64::RDX,
+            Reg::DI => Reg64::RDI,
+            Reg::SI => Reg64::RSI,
+            Reg::R8 => Reg64::R8,
+            Reg::R9 => Reg64::R9,
+            Reg::R10 => Reg64::R10,
+            Reg::R11 => Reg64::R11,
+        }
+    }
+}
+
 impl Display for Reg {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
@@ -153,7 +219,7 @@ impl Display for Reg {
 
 // Enum for 8-bit registers
 #[allow(clippy::upper_case_acronyms)]
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Reg8 {
     AL,
     CL,
@@ -183,7 +249,7 @@ impl Display for Reg8 {
 }
 
 // Enum for 16-bit registers
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Reg16 {
     AX,
     CX,
@@ -214,7 +280,7 @@ impl Display for Reg16 {
 
 // Enum for 32-bit registers
 #[allow(clippy::upper_case_acronyms)]
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Reg32 {
     EAX,
     ECX,
@@ -245,7 +311,7 @@ impl Display for Reg32 {
 
 // Enum for 64-bit registers
 #[allow(clippy::upper_case_acronyms)]
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Reg64 {
     RAX,
     RCX,
@@ -415,7 +481,8 @@ impl From<ir::Instruction> for Vec<Instruction> {
 
                 // adjust stack alignment
                 let (register_args, stack_args) = safe_split_at(&args, 6);
-                let stack_padding = if args.len() % 2 == 0 { 0 } else { 8 };
+                println!("register_args: {register_args:?} stack_args: {stack_args:?}");
+                let stack_padding = if stack_args.len() % 2 == 0 { 0 } else { 8 };
 
                 if stack_padding > 0 {
                     instructions.push(Instruction::AllocateStack(stack_padding));
@@ -483,8 +550,17 @@ impl Display for Instruction {
                 write!(f, "\tset{}\t{}", condition, operand)
             }
             Instruction::Label(label) => write!(f, ".L{}:", label),
-            Instruction::Push(operand) => write!(f, "\tpushl\t{}", operand),
-            Instruction::Call(identifier) => write!(f, "\tcall\t{}", identifier),
+            Instruction::Push(operand) => {
+                let operand = operand.as_64bit();
+                write!(f, "\tpushq\t{}", operand)
+            }
+            Instruction::Call(identifier) => {
+                if cfg!(target_os = "linux") {
+                    write!(f, "\tcall\t{}@PLT", identifier)
+                } else {
+                    write!(f, "\tcall\t_{}", identifier)
+                }
+            }
             Instruction::DeallocateStack(size) => write!(f, "\taddq\t${}, %rsp", size),
             ins => unimplemented!("{:?}", ins),
         }
@@ -561,7 +637,7 @@ impl Display for BinaryOperator {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Operand {
     Imm(i32),
     Reg(Reg),
@@ -571,6 +647,36 @@ pub enum Operand {
     Reg64(Reg64),
     Pseudo(String),
     Stack(i32),
+}
+
+impl Operand {
+    fn as_8bit(&self) -> Operand {
+        match self {
+            Operand::Reg(reg) => Operand::Reg8(reg.as_8bit()),
+            _ => self.clone(),
+        }
+    }
+
+    fn as_16bit(&self) -> Operand {
+        match self {
+            Operand::Reg(reg) => Operand::Reg16(reg.as_16bit()),
+            _ => self.clone(),
+        }
+    }
+
+    fn as_32bit(&self) -> Operand {
+        match self {
+            Operand::Reg(reg) => Operand::Reg32(reg.as_32bit()),
+            _ => self.clone(),
+        }
+    }
+
+    fn as_64bit(&self) -> Operand {
+        match self {
+            Operand::Reg(reg) => Operand::Reg64(reg.as_64bit()),
+            _ => self.clone(),
+        }
+    }
 }
 
 impl Display for Operand {
@@ -680,13 +786,7 @@ impl Assembler {
                             Instruction::Mov(Operand::Imm(op2), Operand::Reg(Reg::R11)),
                             Instruction::Cmp(op1, Operand::Reg(Reg::R11)),
                         ],
-                        Instruction::AllocateStack(size) => {
-                            if size % 16 == 0 {
-                                vec![Instruction::AllocateStack(size)]
-                            } else {
-                                vec![Instruction::AllocateStack(size + (16 - (size % 16)))]
-                            }
-                        }
+
                         instr => vec![instr],
                     })
                     .collect();
@@ -876,6 +976,9 @@ impl Assembler {
                     })
                     .collect::<Vec<_>>();
 
+                // Align the stack offset to 16 bytes
+                let aligned_stack_size = (-stack_offset + 15) & !15;
+
                 instructions.insert(0, Instruction::AllocateStack(-stack_offset));
                 Function {
                     name: function.name,
@@ -890,283 +993,306 @@ impl Assembler {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//
-//     #[test]
-//     fn test_assembly() {
-//         let ir = ir::Program {
-//             function_definition: ir::FuncDefinition {
-//                 name: "main".to_string(),
-//                 instructions: vec![
-//                     ir::Instruction::Unary(
-//                         ir::UnaryOperator::Negate,
-//                         ir::Val::Constant(8),
-//                         ir::Val::Var("tmp.0".to_string()),
-//                     ),
-//                     ir::Instruction::Unary(
-//                         ir::UnaryOperator::Complement,
-//                         ir::Val::Var("tmp.0".to_string()),
-//                         ir::Val::Var("tmp.1".to_string()),
-//                     ),
-//                     ir::Instruction::Unary(
-//                         ir::UnaryOperator::Negate,
-//                         ir::Val::Var("tmp.1".to_string()),
-//                         ir::Val::Var("tmp.2".to_string()),
-//                     ),
-//                     ir::Instruction::Return(ir::Val::Var("tmp.2".to_string())),
-//                 ],
-//             },
-//         };
-//
-//         let assembler = Assembler::new(ir);
-//         let program = assembler.run().unwrap();
-//         println!("{}", program);
-//         // assert_eq!(
-//         //     program.function_definition,
-//         //     Function {
-//         //         name: "main".to_string(),
-//         //         instructions: vec![
-//         //             Instruction::AllocateStack(12),
-//         //             Instruction::Mov(Operand::Imm(8), Operand::Stack(-4)),
-//         //             Instruction::Unary(UnaryOperator::Neg, Operand::Stack(-4)),
-//         //             Instruction::Mov(Operand::Stack(-4), Operand::Stack(-8)),
-//         //             Instruction::Unary(UnaryOperator::Not, Operand::Stack(-8)),
-//         //             Instruction::Mov(Operand::Stack(-8), Operand::Stack(-12)),
-//         //             Instruction::Unary(UnaryOperator::Neg, Operand::Stack(-12)),
-//         //             Instruction::Mov(Operand::Stack(-12), Operand::Reg(Reg::AX)),
-//         //             Instruction::Ret(Ret),
-//         //         ]
-//         //     }
-//         // );
-//     }
-//
-//     #[test]
-//     fn test_from_ret() {
-//         let ir = ir::Program {
-//             function_definition: ir::FuncDefinition {
-//                 name: "main".to_string(),
-//                 instructions: vec![ir::Instruction::Return(ir::Val::Constant(42))],
-//             },
-//         };
-//
-//         let program = Program::from(ir);
-//         assert_eq!(
-//             program.function_definition,
-//             Function {
-//                 name: "main".to_string(),
-//                 instructions: vec![
-//                     Instruction::Mov(Operand::Imm(42), Operand::Reg(Reg::AX)),
-//                     Instruction::Ret(Ret)
-//                 ]
-//             }
-//         );
-//     }
-//
-//     #[test]
-//     fn test_from_unary() {
-//         let ir = ir::Program {
-//             function_definition: ir::FuncDefinition {
-//                 name: "main".to_string(),
-//                 instructions: vec![ir::Instruction::Unary(
-//                     ir::UnaryOperator::Negate,
-//                     ir::Val::Constant(42),
-//                     ir::Val::Var("tmp.0".to_string()),
-//                 )],
-//             },
-//         };
-//
-//         let program = Program::from(ir);
-//         assert_eq!(
-//             program.function_definition,
-//             Function {
-//                 name: "main".to_string(),
-//                 instructions: vec![
-//                     Instruction::Mov(Operand::Imm(42), Operand::Pseudo("tmp.0".to_string())),
-//                     Instruction::Unary(UnaryOperator::Neg, Operand::Pseudo("tmp.0".to_string())),
-//                 ]
-//             }
-//         );
-//     }
-//
-//     fn ir_prog(instrs: Vec<ir::Instruction>) -> ir::Program {
-//         ir::Program {
-//             function_definition: ir::FuncDefinition {
-//                 name: "main".to_string(),
-//                 instructions: instrs,
-//             },
-//         }
-//     }
-//
-//     #[test]
-//     fn test_pseudo_and_vars() {
-//         let prog = ir_prog(vec![ir::Instruction::Binary(
-//             ir::BinaryOperator::And,
-//             ir::Val::Var("tmp.0".to_string()),
-//             ir::Val::Var("tmp.1".to_string()),
-//             ir::Val::Var("tmp.2".to_string()),
-//         )]);
-//
-//         let asm = Assembler::new(prog.clone());
-//         let prog = asm.replace_pseudoregisters(prog.into());
-//
-//         let expected = vec![
-//             Instruction::AllocateStack(12),
-//             Instruction::Mov(Operand::Stack(-4), Operand::Stack(-8)),
-//             Instruction::Binary(BinaryOperator::And, Operand::Stack(-12), Operand::Stack(-8)),
-//         ];
-//
-//         assert_eq!(prog.function_definition.instructions, expected);
-//     }
-//
-//     #[test]
-//     fn test_fixup_and() {
-//         let prog = ir_prog(vec![ir::Instruction::Binary(
-//             ir::BinaryOperator::And,
-//             ir::Val::Var("tmp.0".to_string()),
-//             ir::Val::Var("tmp.1".to_string()),
-//             ir::Val::Var("tmp.2".to_string()),
-//         )]);
-//
-//         let asm = Assembler::new(prog.clone());
-//         let prog = asm.replace_pseudoregisters(prog.into());
-//
-//         let expected = vec![
-//             Instruction::AllocateStack(12),
-//             Instruction::Mov(Operand::Stack(-4), Operand::Stack(-8)),
-//             Instruction::Binary(BinaryOperator::And, Operand::Stack(-12), Operand::Stack(-8)),
-//         ];
-//
-//         assert_eq!(prog.function_definition.instructions, expected);
-//     }
-//     #[test]
-//     fn test_pseudo_mul_vars() {
-//         let prog = ir_prog(vec![ir::Instruction::Binary(
-//             ir::BinaryOperator::Multiply,
-//             ir::Val::Var("tmp.0".to_string()),
-//             ir::Val::Var("tmp.1".to_string()),
-//             ir::Val::Var("tmp.2".to_string()),
-//         )]);
-//
-//         let asm = Assembler::new(prog.clone());
-//         let prog = asm.replace_pseudoregisters(prog.into());
-//
-//         let expected = vec![
-//             Instruction::AllocateStack(12),
-//             Instruction::Mov(Operand::Stack(-4), Operand::Stack(-8)),
-//             Instruction::Binary(BinaryOperator::Mul, Operand::Stack(-12), Operand::Stack(-8)),
-//         ];
-//
-//         assert_eq!(prog.function_definition.instructions, expected);
-//     }
-//
-//     #[test]
-//     fn test_pseudo_mul_const_var() {
-//         let prog = ir_prog(vec![ir::Instruction::Binary(
-//             ir::BinaryOperator::Multiply,
-//             ir::Val::Constant(3),
-//             ir::Val::Var("tmp.1".to_string()),
-//             ir::Val::Var("tmp.2".to_string()),
-//         )]);
-//
-//         let asm = Assembler::new(prog.clone());
-//         let prog = asm.replace_pseudoregisters(prog.into());
-//
-//         let expected = vec![
-//             Instruction::AllocateStack(8),
-//             Instruction::Mov(Operand::Imm(3), Operand::Stack(-4)),
-//             Instruction::Binary(BinaryOperator::Mul, Operand::Stack(-8), Operand::Stack(-4)),
-//         ];
-//
-//         assert_eq!(prog.function_definition.instructions, expected);
-//
-//         let prog = ir_prog(vec![ir::Instruction::Binary(
-//             ir::BinaryOperator::Multiply,
-//             ir::Val::Var("tmp.1".to_string()),
-//             ir::Val::Constant(3),
-//             ir::Val::Var("tmp.2".to_string()),
-//         )]);
-//
-//         let asm = Assembler::new(prog.clone());
-//         let prog = asm.replace_pseudoregisters(prog.into());
-//
-//         let expected = vec![
-//             Instruction::AllocateStack(8),
-//             Instruction::Mov(Operand::Stack(-4), Operand::Stack(-8)),
-//             Instruction::Binary(BinaryOperator::Mul, Operand::Imm(3), Operand::Stack(-8)),
-//         ];
-//
-//         assert_eq!(prog.function_definition.instructions, expected);
-//     }
-//
-//     #[test]
-//     fn test_imull_gen() {
-//         let prog = ir_prog(vec![ir::Instruction::Binary(
-//             ir::BinaryOperator::Multiply,
-//             ir::Val::Constant(3),
-//             ir::Val::Var("tmp.0".to_string()),
-//             ir::Val::Var("tmp.1".to_string()),
-//         )]);
-//
-//         let assembler = Assembler::new(prog.clone());
-//         let program = assembler.run().unwrap();
-//         println!("{:#?}", program);
-//         println!("{}", program);
-//         // assert_eq!(
-//         //     program.function_definition,
-//         //     Function {
-//         //         name: "main".to_string(),
-//         //         instructions: vec![
-//         //             Instruction::Mov(Operand::Imm(42), Operand::Pseudo("tmp.0".to_string())),
-//         //             Instruction::Unary(UnaryOperator::Neg, Operand::Pseudo("tmp.0".to_string())),
-//         //         ]
-//         //     }
-//         // );
-//     }
-//
-//     #[test]
-//     fn test_andl_gen() {
-//         let prog = ir_prog(vec![ir::Instruction::Binary(
-//             ir::BinaryOperator::And,
-//             ir::Val::Constant(3),
-//             ir::Val::Var("tmp.0".to_string()),
-//             ir::Val::Var("tmp.1".to_string()),
-//         )]);
-//
-//         let assembler = Assembler::new(prog.clone());
-//         let program = assembler.run().unwrap();
-//         println!("{:#?}", program);
-//         println!("{}", program);
-//     }
-//
-//     #[test]
-//     fn test_orl_gen() {
-//         let prog = ir_prog(vec![ir::Instruction::Binary(
-//             ir::BinaryOperator::Or,
-//             ir::Val::Constant(3),
-//             ir::Val::Var("tmp.0".to_string()),
-//             ir::Val::Var("tmp.1".to_string()),
-//         )]);
-//
-//         let assembler = Assembler::new(prog.clone());
-//         let program = assembler.run().unwrap();
-//         println!("{:#?}", program);
-//         println!("{}", program);
-//     }
-//
-//     #[test]
-//     fn test_xorl_gen() {
-//         let prog = ir_prog(vec![ir::Instruction::Binary(
-//             ir::BinaryOperator::BitwiseXor,
-//             ir::Val::Constant(3),
-//             ir::Val::Var("tmp.0".to_string()),
-//             ir::Val::Var("tmp.1".to_string()),
-//         )]);
-//
-//         let assembler = Assembler::new(prog.clone());
-//         let program = assembler.run().unwrap();
-//         println!("{:#?}", program);
-//         println!("{}", program);
-//     }
-// }
+#[cfg(test)]
+mod tests {
+    use ir::Ir;
+
+    use crate::{lexer::Lexer, parser::Parser};
+
+    use super::*;
+
+    #[test]
+    fn test_fun_call() {
+        let code = r#"
+            int putchar(int c);
+            int main(void) {
+                putchar(72);
+            }
+        "#;
+
+        let mut lexer = Lexer::new(code);
+        let tokens = lexer.run().unwrap();
+        let mut parser = Parser::new(code, &tokens);
+        let ast = parser.run().unwrap();
+        let ir = Ir::new(ast).run().unwrap();
+        let assembler = Assembler::new(ir);
+        let program = assembler.assemble().unwrap();
+        println!("{}", program);
+    }
+
+    //     #[test]
+    //     fn test_assembly() {
+    //         let ir = ir::Program {
+    //             function_definition: ir::FuncDefinition {
+    //                 name: "main".to_string(),
+    //                 instructions: vec![
+    //                     ir::Instruction::Unary(
+    //                         ir::UnaryOperator::Negate,
+    //                         ir::Val::Constant(8),
+    //                         ir::Val::Var("tmp.0".to_string()),
+    //                     ),
+    //                     ir::Instruction::Unary(
+    //                         ir::UnaryOperator::Complement,
+    //                         ir::Val::Var("tmp.0".to_string()),
+    //                         ir::Val::Var("tmp.1".to_string()),
+    //                     ),
+    //                     ir::Instruction::Unary(
+    //                         ir::UnaryOperator::Negate,
+    //                         ir::Val::Var("tmp.1".to_string()),
+    //                         ir::Val::Var("tmp.2".to_string()),
+    //                     ),
+    //                     ir::Instruction::Return(ir::Val::Var("tmp.2".to_string())),
+    //                 ],
+    //             },
+    //         };
+    //
+    //         let assembler = Assembler::new(ir);
+    //         let program = assembler.run().unwrap();
+    //         println!("{}", program);
+    //         // assert_eq!(
+    //         //     program.function_definition,
+    //         //     Function {
+    //         //         name: "main".to_string(),
+    //         //         instructions: vec![
+    //         //             Instruction::AllocateStack(12),
+    //         //             Instruction::Mov(Operand::Imm(8), Operand::Stack(-4)),
+    //         //             Instruction::Unary(UnaryOperator::Neg, Operand::Stack(-4)),
+    //         //             Instruction::Mov(Operand::Stack(-4), Operand::Stack(-8)),
+    //         //             Instruction::Unary(UnaryOperator::Not, Operand::Stack(-8)),
+    //         //             Instruction::Mov(Operand::Stack(-8), Operand::Stack(-12)),
+    //         //             Instruction::Unary(UnaryOperator::Neg, Operand::Stack(-12)),
+    //         //             Instruction::Mov(Operand::Stack(-12), Operand::Reg(Reg::AX)),
+    //         //             Instruction::Ret(Ret),
+    //         //         ]
+    //         //     }
+    //         // );
+    //     }
+    //
+    //     #[test]
+    //     fn test_from_ret() {
+    //         let ir = ir::Program {
+    //             function_definition: ir::FuncDefinition {
+    //                 name: "main".to_string(),
+    //                 instructions: vec![ir::Instruction::Return(ir::Val::Constant(42))],
+    //             },
+    //         };
+    //
+    //         let program = Program::from(ir);
+    //         assert_eq!(
+    //             program.function_definition,
+    //             Function {
+    //                 name: "main".to_string(),
+    //                 instructions: vec![
+    //                     Instruction::Mov(Operand::Imm(42), Operand::Reg(Reg::AX)),
+    //                     Instruction::Ret(Ret)
+    //                 ]
+    //             }
+    //         );
+    //     }
+    //
+    //     #[test]
+    //     fn test_from_unary() {
+    //         let ir = ir::Program {
+    //             function_definition: ir::FuncDefinition {
+    //                 name: "main".to_string(),
+    //                 instructions: vec![ir::Instruction::Unary(
+    //                     ir::UnaryOperator::Negate,
+    //                     ir::Val::Constant(42),
+    //                     ir::Val::Var("tmp.0".to_string()),
+    //                 )],
+    //             },
+    //         };
+    //
+    //         let program = Program::from(ir);
+    //         assert_eq!(
+    //             program.function_definition,
+    //             Function {
+    //                 name: "main".to_string(),
+    //                 instructions: vec![
+    //                     Instruction::Mov(Operand::Imm(42), Operand::Pseudo("tmp.0".to_string())),
+    //                     Instruction::Unary(UnaryOperator::Neg, Operand::Pseudo("tmp.0".to_string())),
+    //                 ]
+    //             }
+    //         );
+    //     }
+    //
+    //     fn ir_prog(instrs: Vec<ir::Instruction>) -> ir::Program {
+    //         ir::Program {
+    //             function_definition: ir::FuncDefinition {
+    //                 name: "main".to_string(),
+    //                 instructions: instrs,
+    //             },
+    //         }
+    //     }
+    //
+    //     #[test]
+    //     fn test_pseudo_and_vars() {
+    //         let prog = ir_prog(vec![ir::Instruction::Binary(
+    //             ir::BinaryOperator::And,
+    //             ir::Val::Var("tmp.0".to_string()),
+    //             ir::Val::Var("tmp.1".to_string()),
+    //             ir::Val::Var("tmp.2".to_string()),
+    //         )]);
+    //
+    //         let asm = Assembler::new(prog.clone());
+    //         let prog = asm.replace_pseudoregisters(prog.into());
+    //
+    //         let expected = vec![
+    //             Instruction::AllocateStack(12),
+    //             Instruction::Mov(Operand::Stack(-4), Operand::Stack(-8)),
+    //             Instruction::Binary(BinaryOperator::And, Operand::Stack(-12), Operand::Stack(-8)),
+    //         ];
+    //
+    //         assert_eq!(prog.function_definition.instructions, expected);
+    //     }
+    //
+    //     #[test]
+    //     fn test_fixup_and() {
+    //         let prog = ir_prog(vec![ir::Instruction::Binary(
+    //             ir::BinaryOperator::And,
+    //             ir::Val::Var("tmp.0".to_string()),
+    //             ir::Val::Var("tmp.1".to_string()),
+    //             ir::Val::Var("tmp.2".to_string()),
+    //         )]);
+    //
+    //         let asm = Assembler::new(prog.clone());
+    //         let prog = asm.replace_pseudoregisters(prog.into());
+    //
+    //         let expected = vec![
+    //             Instruction::AllocateStack(12),
+    //             Instruction::Mov(Operand::Stack(-4), Operand::Stack(-8)),
+    //             Instruction::Binary(BinaryOperator::And, Operand::Stack(-12), Operand::Stack(-8)),
+    //         ];
+    //
+    //         assert_eq!(prog.function_definition.instructions, expected);
+    //     }
+    //     #[test]
+    //     fn test_pseudo_mul_vars() {
+    //         let prog = ir_prog(vec![ir::Instruction::Binary(
+    //             ir::BinaryOperator::Multiply,
+    //             ir::Val::Var("tmp.0".to_string()),
+    //             ir::Val::Var("tmp.1".to_string()),
+    //             ir::Val::Var("tmp.2".to_string()),
+    //         )]);
+    //
+    //         let asm = Assembler::new(prog.clone());
+    //         let prog = asm.replace_pseudoregisters(prog.into());
+    //
+    //         let expected = vec![
+    //             Instruction::AllocateStack(12),
+    //             Instruction::Mov(Operand::Stack(-4), Operand::Stack(-8)),
+    //             Instruction::Binary(BinaryOperator::Mul, Operand::Stack(-12), Operand::Stack(-8)),
+    //         ];
+    //
+    //         assert_eq!(prog.function_definition.instructions, expected);
+    //     }
+    //
+    //     #[test]
+    //     fn test_pseudo_mul_const_var() {
+    //         let prog = ir_prog(vec![ir::Instruction::Binary(
+    //             ir::BinaryOperator::Multiply,
+    //             ir::Val::Constant(3),
+    //             ir::Val::Var("tmp.1".to_string()),
+    //             ir::Val::Var("tmp.2".to_string()),
+    //         )]);
+    //
+    //         let asm = Assembler::new(prog.clone());
+    //         let prog = asm.replace_pseudoregisters(prog.into());
+    //
+    //         let expected = vec![
+    //             Instruction::AllocateStack(8),
+    //             Instruction::Mov(Operand::Imm(3), Operand::Stack(-4)),
+    //             Instruction::Binary(BinaryOperator::Mul, Operand::Stack(-8), Operand::Stack(-4)),
+    //         ];
+    //
+    //         assert_eq!(prog.function_definition.instructions, expected);
+    //
+    //         let prog = ir_prog(vec![ir::Instruction::Binary(
+    //             ir::BinaryOperator::Multiply,
+    //             ir::Val::Var("tmp.1".to_string()),
+    //             ir::Val::Constant(3),
+    //             ir::Val::Var("tmp.2".to_string()),
+    //         )]);
+    //
+    //         let asm = Assembler::new(prog.clone());
+    //         let prog = asm.replace_pseudoregisters(prog.into());
+    //
+    //         let expected = vec![
+    //             Instruction::AllocateStack(8),
+    //             Instruction::Mov(Operand::Stack(-4), Operand::Stack(-8)),
+    //             Instruction::Binary(BinaryOperator::Mul, Operand::Imm(3), Operand::Stack(-8)),
+    //         ];
+    //
+    //         assert_eq!(prog.function_definition.instructions, expected);
+    //     }
+    //
+    //     #[test]
+    //     fn test_imull_gen() {
+    //         let prog = ir_prog(vec![ir::Instruction::Binary(
+    //             ir::BinaryOperator::Multiply,
+    //             ir::Val::Constant(3),
+    //             ir::Val::Var("tmp.0".to_string()),
+    //             ir::Val::Var("tmp.1".to_string()),
+    //         )]);
+    //
+    //         let assembler = Assembler::new(prog.clone());
+    //         let program = assembler.run().unwrap();
+    //         println!("{:#?}", program);
+    //         println!("{}", program);
+    //         // assert_eq!(
+    //         //     program.function_definition,
+    //         //     Function {
+    //         //         name: "main".to_string(),
+    //         //         instructions: vec![
+    //         //             Instruction::Mov(Operand::Imm(42), Operand::Pseudo("tmp.0".to_string())),
+    //         //             Instruction::Unary(UnaryOperator::Neg, Operand::Pseudo("tmp.0".to_string())),
+    //         //         ]
+    //         //     }
+    //         // );
+    //     }
+    //
+    //     #[test]
+    //     fn test_andl_gen() {
+    //         let prog = ir_prog(vec![ir::Instruction::Binary(
+    //             ir::BinaryOperator::And,
+    //             ir::Val::Constant(3),
+    //             ir::Val::Var("tmp.0".to_string()),
+    //             ir::Val::Var("tmp.1".to_string()),
+    //         )]);
+    //
+    //         let assembler = Assembler::new(prog.clone());
+    //         let program = assembler.run().unwrap();
+    //         println!("{:#?}", program);
+    //         println!("{}", program);
+    //     }
+    //
+    //     #[test]
+    //     fn test_orl_gen() {
+    //         let prog = ir_prog(vec![ir::Instruction::Binary(
+    //             ir::BinaryOperator::Or,
+    //             ir::Val::Constant(3),
+    //             ir::Val::Var("tmp.0".to_string()),
+    //             ir::Val::Var("tmp.1".to_string()),
+    //         )]);
+    //
+    //         let assembler = Assembler::new(prog.clone());
+    //         let program = assembler.run().unwrap();
+    //         println!("{:#?}", program);
+    //         println!("{}", program);
+    //     }
+    //
+    //     #[test]
+    //     fn test_xorl_gen() {
+    //         let prog = ir_prog(vec![ir::Instruction::Binary(
+    //             ir::BinaryOperator::BitwiseXor,
+    //             ir::Val::Constant(3),
+    //             ir::Val::Var("tmp.0".to_string()),
+    //             ir::Val::Var("tmp.1".to_string()),
+    //         )]);
+    //
+    //         let assembler = Assembler::new(prog.clone());
+    //         let program = assembler.run().unwrap();
+    //         println!("{:#?}", program);
+    //         println!("{}", program);
+    //     }
+}

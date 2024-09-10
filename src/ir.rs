@@ -22,6 +22,7 @@ impl TryFrom<parser::Program> for Program {
         let function_definitions = program
             .function_declarations
             .into_iter()
+            .filter(|fd| fd.body.is_some())
             .map(|d| d.try_into())
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -74,20 +75,22 @@ trait IntoInstructions {
 
 impl IntoInstructions for parser::FunctionDecl {
     fn into_instructions(self, context: &mut Context) -> miette::Result<Vec<Instruction>> {
-        if let Some(body) = self.body {
-            let mut instructions = body.into_instructions(context)?;
-            // if no return is found
-            if let Some(last) = instructions.last() {
-                if !matches!(last, Instruction::Return(_)) {
-                    instructions.push(Instruction::Return(Val::Constant(0)));
-                }
-            } else {
+        println!("handling fn: {:?}", self);
+        let Some(body) = self.body else {
+            return Ok(vec![]);
+        };
+
+        let mut instructions = body.into_instructions(context)?;
+        // if no return is found
+        if let Some(last) = instructions.last() {
+            if !matches!(last, Instruction::Return(_)) {
                 instructions.push(Instruction::Return(Val::Constant(0)));
             }
-            return Ok(instructions);
+        } else {
+            instructions.push(Instruction::Return(Val::Constant(0)));
         }
 
-        Ok(vec![])
+        Ok(instructions)
     }
 }
 
