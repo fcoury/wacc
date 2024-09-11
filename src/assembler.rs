@@ -50,29 +50,38 @@ impl Display for Program {
 pub struct Function {
     pub name: String,
     pub instructions: Vec<Instruction>,
+    pub stack_size: i32,
 }
 
 impl From<ir::Function> for Function {
     fn from(function: ir::Function) -> Self {
         let mut instructions = Vec::new();
 
-        println!("converting function: {:?}", function);
         if function.instructions.is_empty() {
             return Function {
                 name: function.name,
                 instructions,
+                stack_size: 0,
             };
         }
 
         for (i, param) in function.params.iter().enumerate() {
             if i < 6 {
+                instructions.push(Instruction::Comment(format!(
+                    "Param {i} - {param} came in {}",
+                    ARG_REGISTERS[i]
+                )));
                 instructions.push(Instruction::Mov(
                     Operand::Reg(ARG_REGISTERS[i]),
                     Operand::Pseudo(param.clone()),
                 ));
             } else {
+                instructions.push(Instruction::Comment(format!(
+                    "Param {i} - {param} came in stack {}",
+                    (i as i32 - 4) * 8
+                )));
                 instructions.push(Instruction::Mov(
-                    Operand::Stack((i as i32 - 5) * 8),
+                    Operand::Stack((i as i32 - 4) * 8),
                     Operand::Pseudo(param.clone()),
                 ));
             }
@@ -81,14 +90,15 @@ impl From<ir::Function> for Function {
         instructions.extend(
             function
                 .instructions
-                .into_iter()
-                .flat_map(Into::<Vec<Instruction>>::into)
+                .iter()
+                .flat_map(|instruction| from(instruction.clone(), &function))
                 .collect::<Vec<_>>(),
         );
 
         Function {
             name: function.name,
             instructions,
+            stack_size: function.params.len() as i32 * 8,
         }
     }
 }
@@ -141,6 +151,30 @@ pub enum Reg {
     R9,
     R10,
     R11,
+}
+
+impl From<Reg> for Reg8 {
+    fn from(reg: Reg) -> Self {
+        reg.as_8bit()
+    }
+}
+
+impl From<Reg> for Reg16 {
+    fn from(reg: Reg) -> Self {
+        reg.as_16bit()
+    }
+}
+
+impl From<Reg> for Reg32 {
+    fn from(reg: Reg) -> Self {
+        reg.as_32bit()
+    }
+}
+
+impl From<Reg> for Reg64 {
+    fn from(reg: Reg) -> Self {
+        reg.as_64bit()
+    }
 }
 
 impl Reg {
@@ -379,159 +413,346 @@ pub enum Instruction {
     JmpCC(Condition, Identifier),
     SetCC(Condition, Operand),
     Label(Identifier),
-    AllocateStack(i32),
+    AllocateStack(i32, String),
     DeallocateStack(i32),
     Push(Operand),
+    Pop(Operand),
     Call(Identifier),
     Ret(Ret),
+    Comment(String),
 }
 
-impl From<ir::Instruction> for Vec<Instruction> {
-    fn from(instruction: ir::Instruction) -> Self {
-        match instruction {
-            ir::Instruction::Unary(op, src, dst) => match op {
-                ir::UnaryOperator::Not => vec![
-                    Instruction::Cmp(Operand::Imm(0), src.into()),
-                    Instruction::Mov(Operand::Imm(0), dst.clone().into()),
-                    Instruction::SetCC(Condition::E, dst.into()),
-                ],
-                _ => vec![
-                    Instruction::Mov(src.into(), dst.clone().into()),
-                    Instruction::Unary(op.into(), dst.into()),
-                ],
-            },
-            ir::Instruction::Return(val) => vec![
-                Instruction::Mov(val.into(), Operand::Reg(Reg::AX)),
-                Instruction::Ret(Ret),
+macro_rules! comment {
+    ($instructions:expr, $($arg:tt)*) => {
+        $instructions.push(Instruction::Comment(format!($($arg)*)));
+    };
+}
+
+fn from(instruction: ir::Instruction, context: &ir::Function) -> Vec<Instruction> {
+    match instruction {
+        ir::Instruction::Unary(op, src, dst) => match op {
+            ir::UnaryOperator::Not => vec![
+                Instruction::Cmp(Operand::Imm(0), src.into()),
+                Instruction::Mov(Operand::Imm(0), dst.clone().into()),
+                Instruction::SetCC(Condition::E, dst.into()),
             ],
-            ir::Instruction::Binary(op, src1, src2, dst) => match op {
-                ir::BinaryOperator::Add
-                | ir::BinaryOperator::Subtract
-                | ir::BinaryOperator::Multiply
-                | ir::BinaryOperator::And
-                | ir::BinaryOperator::Or
-                | ir::BinaryOperator::BitwiseAnd
-                | ir::BinaryOperator::BitwiseOr
-                | ir::BinaryOperator::BitwiseXor => vec![
-                    Instruction::Mov(src1.into(), dst.clone().into()),
-                    Instruction::Binary(op.into(), src2.into(), dst.into()),
-                ],
-                ir::BinaryOperator::ShiftLeft | ir::BinaryOperator::ShiftRight => vec![
-                    Instruction::Mov(src1.into(), dst.clone().into()),
-                    Instruction::Mov(src2.into(), Operand::Reg(Reg::CX)),
-                    Instruction::Binary(op.into(), Operand::Reg8(Reg8::CL), dst.into()),
-                ],
-                ir::BinaryOperator::Divide => vec![
-                    Instruction::Mov(src1.into(), Operand::Reg(Reg::AX)),
-                    Instruction::Cdq,
-                    Instruction::Idiv(src2.into()),
-                    Instruction::Mov(Operand::Reg(Reg::AX), dst.into()),
-                ],
-                ir::BinaryOperator::Remainder => vec![
-                    Instruction::Mov(src1.into(), Operand::Reg(Reg::AX)),
-                    Instruction::Cdq,
-                    Instruction::Idiv(src2.into()),
-                    Instruction::Mov(Operand::Reg(Reg::DX), dst.into()),
-                ],
-                ir::BinaryOperator::Equal => vec![
-                    Instruction::Cmp(src1.into(), src2.into()),
-                    Instruction::Mov(Operand::Imm(0), dst.clone().into()),
-                    Instruction::SetCC(Condition::E, dst.into()),
-                ],
-                ir::BinaryOperator::NotEqual => vec![
-                    Instruction::Cmp(src1.into(), src2.into()),
-                    Instruction::Mov(Operand::Imm(0), dst.clone().into()),
-                    Instruction::SetCC(Condition::NE, dst.into()),
-                ],
-                ir::BinaryOperator::GreaterThan => vec![
-                    Instruction::Cmp(src2.into(), src1.into()),
-                    Instruction::Mov(Operand::Imm(0), dst.clone().into()),
-                    Instruction::SetCC(Condition::G, dst.into()),
-                ],
-                ir::BinaryOperator::GreaterOrEqual => vec![
-                    Instruction::Cmp(src2.into(), src1.into()),
-                    Instruction::Mov(Operand::Imm(0), dst.clone().into()),
-                    Instruction::SetCC(Condition::GE, dst.into()),
-                ],
-                ir::BinaryOperator::LessThan => vec![
-                    Instruction::Cmp(src2.into(), src1.into()),
-                    Instruction::Mov(Operand::Imm(0), dst.clone().into()),
-                    Instruction::SetCC(Condition::L, dst.into()),
-                ],
-                ir::BinaryOperator::LessOrEqual => vec![
-                    Instruction::Cmp(src2.into(), src1.into()),
-                    Instruction::Mov(Operand::Imm(0), dst.clone().into()),
-                    Instruction::SetCC(Condition::LE, dst.into()),
-                ],
-                op => todo!("{:?}", op),
-            },
-            ir::Instruction::JumpIfZero(val, target) => vec![
-                Instruction::Cmp(Operand::Imm(0), val.into()),
-                Instruction::JmpCC(Condition::E, target),
+            _ => vec![
+                Instruction::Mov(src.into(), dst.clone().into()),
+                Instruction::Unary(op.into(), dst.into()),
             ],
-            ir::Instruction::JumpIfNotZero(val, target) => vec![
-                Instruction::Cmp(Operand::Imm(0), val.into()),
-                Instruction::JmpCC(Condition::NE, target),
+        },
+        ir::Instruction::Return(val) => vec![
+            Instruction::Mov(val.into(), Operand::Reg(Reg::AX)),
+            Instruction::Ret(Ret),
+        ],
+        ir::Instruction::Binary(op, src1, src2, dst) => match op {
+            ir::BinaryOperator::Add
+            | ir::BinaryOperator::Subtract
+            | ir::BinaryOperator::Multiply
+            | ir::BinaryOperator::And
+            | ir::BinaryOperator::Or
+            | ir::BinaryOperator::BitwiseAnd
+            | ir::BinaryOperator::BitwiseOr
+            | ir::BinaryOperator::BitwiseXor => vec![
+                Instruction::Mov(src1.into(), dst.clone().into()),
+                Instruction::Binary(op.into(), src2.into(), dst.into()),
             ],
-            ir::Instruction::Jump(target) => vec![Instruction::Jmp(target)],
-            ir::Instruction::Label(label) => vec![Instruction::Label(label)],
-            ir::Instruction::Copy(src, dst) => vec![Instruction::Mov(src.into(), dst.into())],
-            ir::Instruction::FunCall(fun_name, args, dst) => {
-                let mut instructions = Vec::new();
+            ir::BinaryOperator::ShiftLeft | ir::BinaryOperator::ShiftRight => vec![
+                Instruction::Mov(src1.into(), dst.clone().into()),
+                Instruction::Mov(src2.into(), Operand::Reg(Reg::CX)),
+                Instruction::Binary(op.into(), Operand::Reg8(Reg8::CL), dst.into()),
+            ],
+            ir::BinaryOperator::Divide => vec![
+                Instruction::Mov(src1.into(), Operand::Reg(Reg::AX)),
+                Instruction::Cdq,
+                Instruction::Idiv(src2.into()),
+                Instruction::Mov(Operand::Reg(Reg::AX), dst.into()),
+            ],
+            ir::BinaryOperator::Remainder => vec![
+                Instruction::Mov(src1.into(), Operand::Reg(Reg::AX)),
+                Instruction::Cdq,
+                Instruction::Idiv(src2.into()),
+                Instruction::Mov(Operand::Reg(Reg::DX), dst.into()),
+            ],
+            ir::BinaryOperator::Equal => vec![
+                Instruction::Cmp(src1.into(), src2.into()),
+                Instruction::Mov(Operand::Imm(0), dst.clone().into()),
+                Instruction::SetCC(Condition::E, dst.into()),
+            ],
+            ir::BinaryOperator::NotEqual => vec![
+                Instruction::Cmp(src1.into(), src2.into()),
+                Instruction::Mov(Operand::Imm(0), dst.clone().into()),
+                Instruction::SetCC(Condition::NE, dst.into()),
+            ],
+            ir::BinaryOperator::GreaterThan => vec![
+                Instruction::Cmp(src2.into(), src1.into()),
+                Instruction::Mov(Operand::Imm(0), dst.clone().into()),
+                Instruction::SetCC(Condition::G, dst.into()),
+            ],
+            ir::BinaryOperator::GreaterOrEqual => vec![
+                Instruction::Cmp(src2.into(), src1.into()),
+                Instruction::Mov(Operand::Imm(0), dst.clone().into()),
+                Instruction::SetCC(Condition::GE, dst.into()),
+            ],
+            ir::BinaryOperator::LessThan => vec![
+                Instruction::Cmp(src2.into(), src1.into()),
+                Instruction::Mov(Operand::Imm(0), dst.clone().into()),
+                Instruction::SetCC(Condition::L, dst.into()),
+            ],
+            ir::BinaryOperator::LessOrEqual => vec![
+                Instruction::Cmp(src2.into(), src1.into()),
+                Instruction::Mov(Operand::Imm(0), dst.clone().into()),
+                Instruction::SetCC(Condition::LE, dst.into()),
+            ],
+            op => todo!("{:?}", op),
+        },
+        ir::Instruction::JumpIfZero(val, target) => vec![
+            Instruction::Cmp(Operand::Imm(0), val.into()),
+            Instruction::JmpCC(Condition::E, target),
+        ],
+        ir::Instruction::JumpIfNotZero(val, target) => vec![
+            Instruction::Cmp(Operand::Imm(0), val.into()),
+            Instruction::JmpCC(Condition::NE, target),
+        ],
+        ir::Instruction::Jump(target) => vec![Instruction::Jmp(target)],
+        ir::Instruction::Label(label) => vec![Instruction::Label(label)],
+        ir::Instruction::Copy(src, dst) => vec![Instruction::Mov(src.into(), dst.into())],
+        // Registers RAX, R10, R11, and all the parameter passing registers are caller-saved;
+        // the remaining registers are callee-saved.
+        ir::Instruction::FunCall(fun_name, args, dst) => {
+            let mut instructions = Vec::new();
 
-                // adjust stack alignment
-                let (register_args, stack_args) = safe_split_at(&args, 6);
-                println!("register_args: {register_args:?} stack_args: {stack_args:?}");
-                let stack_padding = if stack_args.len() % 2 == 0 { 0 } else { 8 };
+            comment!(instructions, "Starting call: {fun_name}");
 
-                if stack_padding > 0 {
-                    instructions.push(Instruction::AllocateStack(stack_padding));
-                }
+            // adjust stack alignment
+            let (register_args, stack_args) = safe_split_at(&args, 6);
+            let stack_padding = if stack_args.len() % 2 == 0 { 0 } else { 8 };
 
-                // pass args in registers
-                for (reg_index, tacky_arg) in register_args.iter().enumerate() {
-                    let r = ARG_REGISTERS[reg_index];
-                    instructions.push(Instruction::Mov(tacky_arg.clone().into(), Operand::Reg(r)));
-                }
+            if stack_padding > 0 {
+                comment!(instructions, "Adjust stack alignment");
+                instructions.push(Instruction::AllocateStack(
+                    stack_padding,
+                    "Padding for arguments".to_string(),
+                ));
+            }
 
-                // pass args on stack
-                for tacky_arg in stack_args.iter().rev() {
-                    let assembly_arg = tacky_arg.clone().into();
-                    match assembly_arg {
-                        Operand::Imm(_) => instructions.push(Instruction::Push(assembly_arg)),
-                        Operand::Reg(_) => instructions.push(Instruction::Push(assembly_arg)),
-                        _ => {
-                            instructions
-                                .push(Instruction::Mov(assembly_arg, Operand::Reg(Reg::AX)));
-                            instructions.push(Instruction::Push(Operand::Reg(Reg::AX)));
-                        }
+            instructions.push(Instruction::Comment(
+                "Passing arguments in registers".to_string(),
+            ));
+
+            // pass args in registers
+            for (reg_index, tacky_arg) in register_args.iter().enumerate() {
+                let r = ARG_REGISTERS[reg_index];
+                instructions.push(Instruction::Mov(tacky_arg.clone().into(), Operand::Reg(r)));
+            }
+
+            if !stack_args.is_empty() {
+                instructions.push(Instruction::Comment(
+                    "Passing arguments on stack".to_string(),
+                ));
+            }
+
+            // pass args on stack
+            for tacky_arg in stack_args.iter().rev() {
+                let assembly_arg = tacky_arg.clone().into();
+                match assembly_arg {
+                    Operand::Imm(_) => instructions.push(Instruction::Push(assembly_arg)),
+                    Operand::Reg(_) => instructions.push(Instruction::Push(assembly_arg)),
+                    _ => {
+                        instructions.push(Instruction::Mov(assembly_arg, Operand::Reg(Reg::AX)));
+                        instructions.push(Instruction::Push(Operand::Reg(Reg::AX)));
                     }
                 }
-
-                // emit call instruction
-                instructions.push(Instruction::Call(fun_name));
-
-                // adjust stack pointer
-                let bytes_to_remove = 8 * stack_args.len() as i32 + stack_padding;
-                if bytes_to_remove > 0 {
-                    instructions.push(Instruction::DeallocateStack(bytes_to_remove));
-                }
-
-                // retrieve return value
-                instructions.push(Instruction::Mov(Operand::Reg(Reg::AX), dst.into()));
-
-                instructions
             }
+
+            // emit call instruction
+            comment!(instructions, "Calls {fun_name}");
+            instructions.push(Instruction::Call(fun_name));
+
+            // adjust stack pointer
+            let bytes_to_remove = 8 * stack_args.len() as i32 + stack_padding;
+            if bytes_to_remove > 0 {
+                instructions.push(Instruction::Comment("Adjust stack pointer".to_string()));
+                instructions.push(Instruction::DeallocateStack(bytes_to_remove));
+            }
+
+            // retrieve return value
+            comment!(instructions, "Setting return value into {dst:?}");
+            instructions.push(Instruction::Mov(Operand::Reg(Reg::AX), dst.into()));
+
+            comment!(instructions, "Ending call");
+
+            instructions
         }
     }
 }
+
+// impl From<ir::Instruction> for Vec<Instruction> {
+//     fn from(instruction: ir::Instruction) -> Self {
+//         match instruction {
+//             ir::Instruction::Unary(op, src, dst) => match op {
+//                 ir::UnaryOperator::Not => vec![
+//                     Instruction::Cmp(Operand::Imm(0), src.into()),
+//                     Instruction::Mov(Operand::Imm(0), dst.clone().into()),
+//                     Instruction::SetCC(Condition::E, dst.into()),
+//                 ],
+//                 _ => vec![
+//                     Instruction::Mov(src.into(), dst.clone().into()),
+//                     Instruction::Unary(op.into(), dst.into()),
+//                 ],
+//             },
+//             ir::Instruction::Return(val) => vec![
+//                 Instruction::Mov(val.into(), Operand::Reg(Reg::AX)),
+//                 Instruction::Ret(Ret),
+//             ],
+//             ir::Instruction::Binary(op, src1, src2, dst) => match op {
+//                 ir::BinaryOperator::Add
+//                 | ir::BinaryOperator::Subtract
+//                 | ir::BinaryOperator::Multiply
+//                 | ir::BinaryOperator::And
+//                 | ir::BinaryOperator::Or
+//                 | ir::BinaryOperator::BitwiseAnd
+//                 | ir::BinaryOperator::BitwiseOr
+//                 | ir::BinaryOperator::BitwiseXor => vec![
+//                     Instruction::Mov(src1.into(), dst.clone().into()),
+//                     Instruction::Binary(op.into(), src2.into(), dst.into()),
+//                 ],
+//                 ir::BinaryOperator::ShiftLeft | ir::BinaryOperator::ShiftRight => vec![
+//                     Instruction::Mov(src1.into(), dst.clone().into()),
+//                     Instruction::Mov(src2.into(), Operand::Reg(Reg::CX)),
+//                     Instruction::Binary(op.into(), Operand::Reg8(Reg8::CL), dst.into()),
+//                 ],
+//                 ir::BinaryOperator::Divide => vec![
+//                     Instruction::Mov(src1.into(), Operand::Reg(Reg::AX)),
+//                     Instruction::Cdq,
+//                     Instruction::Idiv(src2.into()),
+//                     Instruction::Mov(Operand::Reg(Reg::AX), dst.into()),
+//                 ],
+//                 ir::BinaryOperator::Remainder => vec![
+//                     Instruction::Mov(src1.into(), Operand::Reg(Reg::AX)),
+//                     Instruction::Cdq,
+//                     Instruction::Idiv(src2.into()),
+//                     Instruction::Mov(Operand::Reg(Reg::DX), dst.into()),
+//                 ],
+//                 ir::BinaryOperator::Equal => vec![
+//                     Instruction::Cmp(src1.into(), src2.into()),
+//                     Instruction::Mov(Operand::Imm(0), dst.clone().into()),
+//                     Instruction::SetCC(Condition::E, dst.into()),
+//                 ],
+//                 ir::BinaryOperator::NotEqual => vec![
+//                     Instruction::Cmp(src1.into(), src2.into()),
+//                     Instruction::Mov(Operand::Imm(0), dst.clone().into()),
+//                     Instruction::SetCC(Condition::NE, dst.into()),
+//                 ],
+//                 ir::BinaryOperator::GreaterThan => vec![
+//                     Instruction::Cmp(src2.into(), src1.into()),
+//                     Instruction::Mov(Operand::Imm(0), dst.clone().into()),
+//                     Instruction::SetCC(Condition::G, dst.into()),
+//                 ],
+//                 ir::BinaryOperator::GreaterOrEqual => vec![
+//                     Instruction::Cmp(src2.into(), src1.into()),
+//                     Instruction::Mov(Operand::Imm(0), dst.clone().into()),
+//                     Instruction::SetCC(Condition::GE, dst.into()),
+//                 ],
+//                 ir::BinaryOperator::LessThan => vec![
+//                     Instruction::Cmp(src2.into(), src1.into()),
+//                     Instruction::Mov(Operand::Imm(0), dst.clone().into()),
+//                     Instruction::SetCC(Condition::L, dst.into()),
+//                 ],
+//                 ir::BinaryOperator::LessOrEqual => vec![
+//                     Instruction::Cmp(src2.into(), src1.into()),
+//                     Instruction::Mov(Operand::Imm(0), dst.clone().into()),
+//                     Instruction::SetCC(Condition::LE, dst.into()),
+//                 ],
+//                 op => todo!("{:?}", op),
+//             },
+//             ir::Instruction::JumpIfZero(val, target) => vec![
+//                 Instruction::Cmp(Operand::Imm(0), val.into()),
+//                 Instruction::JmpCC(Condition::E, target),
+//             ],
+//             ir::Instruction::JumpIfNotZero(val, target) => vec![
+//                 Instruction::Cmp(Operand::Imm(0), val.into()),
+//                 Instruction::JmpCC(Condition::NE, target),
+//             ],
+//             ir::Instruction::Jump(target) => vec![Instruction::Jmp(target)],
+//             ir::Instruction::Label(label) => vec![Instruction::Label(label)],
+//             ir::Instruction::Copy(src, dst) => vec![Instruction::Mov(src.into(), dst.into())],
+//             // Registers RAX, R10, R11, and all the parameter passing registers are caller-saved;
+//             // the remaining registers are callee-saved.
+//             ir::Instruction::FunCall(fun_name, args, dst) => {
+//                 let mut instructions = Vec::new();
+//                 instructions.push(Instruction::Comment(format!("Starting call: {fun_name}")));
+//
+//                 // adjust stack alignment
+//                 let (register_args, stack_args) = safe_split_at(&args, 6);
+//                 let stack_padding = if stack_args.len() % 2 == 0 { 0 } else { 8 };
+//
+//                 if stack_padding > 0 {
+//                     instructions.push(Instruction::Comment("Adjust stack alignment".to_string()));
+//                     instructions.push(Instruction::AllocateStack(
+//                         stack_padding,
+//                         "Padding for arguments".to_string(),
+//                     ));
+//                 }
+//
+//                 instructions.push(Instruction::Comment(
+//                     "Passing arguments in registers".to_string(),
+//                 ));
+//
+//                 // pass args in registers
+//                 for (reg_index, tacky_arg) in register_args.iter().enumerate() {
+//                     let r = ARG_REGISTERS[reg_index];
+//                     instructions.push(Instruction::Mov(tacky_arg.clone().into(), Operand::Reg(r)));
+//                 }
+//
+//                 if !stack_args.is_empty() {
+//                     instructions.push(Instruction::Comment(
+//                         "Passing arguments on stack".to_string(),
+//                     ));
+//                 }
+//
+//                 // pass args on stack
+//                 for tacky_arg in stack_args.iter().rev() {
+//                     let assembly_arg = tacky_arg.clone().into();
+//                     match assembly_arg {
+//                         Operand::Imm(_) => instructions.push(Instruction::Push(assembly_arg)),
+//                         Operand::Reg(_) => instructions.push(Instruction::Push(assembly_arg)),
+//                         _ => {
+//                             instructions
+//                                 .push(Instruction::Mov(assembly_arg, Operand::Reg(Reg::AX)));
+//                             instructions.push(Instruction::Push(Operand::Reg(Reg::AX)));
+//                         }
+//                     }
+//                 }
+//
+//                 // emit call instruction
+//                 instructions.push(Instruction::Comment(format!("Calls {fun_name}")));
+//                 instructions.push(Instruction::Call(fun_name));
+//
+//                 // adjust stack pointer
+//                 let bytes_to_remove = 8 * stack_args.len() as i32 + stack_padding;
+//                 if bytes_to_remove > 0 {
+//                     instructions.push(Instruction::Comment("Adjust stack pointer".to_string()));
+//                     instructions.push(Instruction::DeallocateStack(bytes_to_remove));
+//                 }
+//
+//                 // retrieve return value
+//                 instructions.push(Instruction::Mov(Operand::Reg(Reg::AX), dst.into()));
+//
+//                 instructions
+//             }
+//         }
+//     }
+// }
 
 impl Display for Instruction {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
             Instruction::Mov(src, dst) => write!(f, "\tmovl\t{}, {}", src, dst),
             Instruction::Unary(operator, operand) => write!(f, "\t{}\t{}", operator, operand),
-            Instruction::AllocateStack(size) => write!(f, "\tsubq\t${}, %rsp", size),
+            Instruction::AllocateStack(size, comment) => {
+                write!(f, "\tsubq\t${}, %rsp\t# {}", size, comment)
+            }
             Instruction::Ret(ret) => write!(f, "\t{}", ret),
             Instruction::Binary(operator, src1, src2) => {
                 write!(f, "\t{}\t{}, {}", operator, src1, src2)
@@ -554,6 +775,10 @@ impl Display for Instruction {
                 let operand = operand.as_64bit();
                 write!(f, "\tpushq\t{}", operand)
             }
+            Instruction::Pop(operand) => {
+                let operand = operand.as_64bit();
+                write!(f, "\tpopq\t{}", operand)
+            }
             Instruction::Call(identifier) => {
                 if cfg!(target_os = "linux") {
                     write!(f, "\tcall\t{}@PLT", identifier)
@@ -562,6 +787,7 @@ impl Display for Instruction {
                 }
             }
             Instruction::DeallocateStack(size) => write!(f, "\taddq\t${}, %rsp", size),
+            Instruction::Comment(comment) => write!(f, "# {}", comment),
             ins => unimplemented!("{:?}", ins),
         }
     }
@@ -713,7 +939,11 @@ impl Assembler {
     }
 
     pub fn assemble(&self) -> miette::Result<Program> {
-        let program = self.program.clone().into();
+        let program: Program = self.program.clone().into();
+        println!("\nRaw assembly:");
+        for function in program.function_definitions.iter() {
+            println!("{:?}", function);
+        }
         let program = self.replace_pseudoregisters(program);
         let program = self.fixup_instructions(program);
         Ok(program)
@@ -729,71 +959,118 @@ impl Assembler {
             .function_definitions
             .into_iter()
             .map(|function| {
-                let instructions = function
-                    .instructions
-                    .into_iter()
-                    .flat_map(|instruction| match instruction {
-                        Instruction::Mov(src, dst) => match (src, dst) {
-                            (Operand::Stack(src), Operand::Stack(dst)) => {
-                                vec![
-                                    Instruction::Mov(Operand::Stack(src), Operand::Reg(Reg::R10)),
-                                    Instruction::Mov(Operand::Reg(Reg::R10), Operand::Stack(dst)),
-                                ]
-                            }
-                            (src, dst) => vec![Instruction::Mov(src, dst)],
-                        },
-                        Instruction::Idiv(operand) => vec![
-                            Instruction::Mov(operand, Operand::Reg(Reg::R10)),
-                            Instruction::Idiv(Operand::Reg(Reg::R10)),
-                        ],
-                        Instruction::Binary(op, src1, src2) => match (&op, src1, src2) {
-                            (BinaryOperator::Add, Operand::Stack(src1), Operand::Stack(src2))
-                            | (BinaryOperator::Sub, Operand::Stack(src1), Operand::Stack(src2))
-                            | (
-                                BinaryOperator::ShiftLeft,
-                                Operand::Stack(src1),
-                                Operand::Stack(src2),
-                            )
-                            | (
-                                BinaryOperator::ShiftRight,
-                                Operand::Stack(src1),
-                                Operand::Stack(src2),
-                            ) => {
-                                vec![
-                                    Instruction::Mov(Operand::Stack(src1), Operand::Reg(Reg::R10)),
-                                    Instruction::Binary(
-                                        op,
-                                        Operand::Reg(Reg::R10),
-                                        Operand::Stack(src2),
-                                    ),
-                                ]
-                            }
-                            (BinaryOperator::Mul, src1, Operand::Stack(src2))
-                            | (BinaryOperator::And, src1, Operand::Stack(src2))
-                            | (BinaryOperator::Or, src1, Operand::Stack(src2))
-                            | (BinaryOperator::Xor, src1, Operand::Stack(src2)) => vec![
-                                Instruction::Mov(Operand::Stack(src2), Operand::Reg(Reg::R11)),
-                                Instruction::Binary(op, src1, Operand::Reg(Reg::R11)),
-                                Instruction::Mov(Operand::Reg(Reg::R11), Operand::Stack(src2)),
-                            ],
-                            (op, src1, src2) => vec![Instruction::Binary(*op, src1, src2)],
-                        },
-                        Instruction::Cmp(Operand::Stack(op1), Operand::Stack(op2)) => vec![
-                            Instruction::Mov(Operand::Stack(op1), Operand::Reg(Reg::R10)),
-                            Instruction::Cmp(Operand::Reg(Reg::R10), Operand::Stack(op2)),
-                        ],
-                        Instruction::Cmp(op1, Operand::Imm(op2)) => vec![
-                            Instruction::Mov(Operand::Imm(op2), Operand::Reg(Reg::R11)),
-                            Instruction::Cmp(op1, Operand::Reg(Reg::R11)),
-                        ],
+                let mut instructions = Vec::new();
 
-                        instr => vec![instr],
-                    })
-                    .collect();
+                comment!(instructions, "Save caller-saved registers");
+                instructions.push(Instruction::Push(Operand::Reg(Reg::AX)));
+                instructions.push(Instruction::Push(Operand::Reg(Reg::R10)));
+                instructions.push(Instruction::Push(Operand::Reg(Reg::R11)));
+
+                for reg in ARG_REGISTERS.iter() {
+                    instructions.push(Instruction::Push(Operand::Reg(*reg)));
+                }
+                // for (i, params) in context.params.iter().enumerate() {
+                //     if i < 6 {
+                //         instructions.push(Instruction::Push(Operand::Reg(ARG_REGISTERS[i])));
+                //     } else {
+                //         break;
+                //     }
+                // }
+
+                instructions.extend(
+                    function
+                        .instructions
+                        .into_iter()
+                        .flat_map(|instruction| match instruction {
+                            Instruction::Mov(src, dst) => match (src, dst) {
+                                (Operand::Stack(src), Operand::Stack(dst)) => {
+                                    vec![
+                                        Instruction::Mov(
+                                            Operand::Stack(src),
+                                            Operand::Reg(Reg::R10),
+                                        ),
+                                        Instruction::Mov(
+                                            Operand::Reg(Reg::R10),
+                                            Operand::Stack(dst),
+                                        ),
+                                    ]
+                                }
+                                (src, dst) => vec![Instruction::Mov(src, dst)],
+                            },
+                            Instruction::Idiv(operand) => vec![
+                                Instruction::Mov(operand, Operand::Reg(Reg::R10)),
+                                Instruction::Idiv(Operand::Reg(Reg::R10)),
+                            ],
+                            Instruction::Binary(op, src1, src2) => match (&op, src1, src2) {
+                                (
+                                    BinaryOperator::Add,
+                                    Operand::Stack(src1),
+                                    Operand::Stack(src2),
+                                )
+                                | (
+                                    BinaryOperator::Sub,
+                                    Operand::Stack(src1),
+                                    Operand::Stack(src2),
+                                )
+                                | (
+                                    BinaryOperator::ShiftLeft,
+                                    Operand::Stack(src1),
+                                    Operand::Stack(src2),
+                                )
+                                | (
+                                    BinaryOperator::ShiftRight,
+                                    Operand::Stack(src1),
+                                    Operand::Stack(src2),
+                                ) => {
+                                    vec![
+                                        Instruction::Mov(
+                                            Operand::Stack(src1),
+                                            Operand::Reg(Reg::R10),
+                                        ),
+                                        Instruction::Binary(
+                                            op,
+                                            Operand::Reg(Reg::R10),
+                                            Operand::Stack(src2),
+                                        ),
+                                    ]
+                                }
+                                (BinaryOperator::Mul, src1, Operand::Stack(src2))
+                                | (BinaryOperator::And, src1, Operand::Stack(src2))
+                                | (BinaryOperator::Or, src1, Operand::Stack(src2))
+                                | (BinaryOperator::Xor, src1, Operand::Stack(src2)) => vec![
+                                    Instruction::Mov(Operand::Stack(src2), Operand::Reg(Reg::R11)),
+                                    Instruction::Binary(op, src1, Operand::Reg(Reg::R11)),
+                                    Instruction::Mov(Operand::Reg(Reg::R11), Operand::Stack(src2)),
+                                ],
+                                (op, src1, src2) => vec![Instruction::Binary(*op, src1, src2)],
+                            },
+                            Instruction::Cmp(Operand::Stack(op1), Operand::Stack(op2)) => vec![
+                                Instruction::Mov(Operand::Stack(op1), Operand::Reg(Reg::R10)),
+                                Instruction::Cmp(Operand::Reg(Reg::R10), Operand::Stack(op2)),
+                            ],
+                            Instruction::Cmp(op1, Operand::Imm(op2)) => vec![
+                                Instruction::Mov(Operand::Imm(op2), Operand::Reg(Reg::R11)),
+                                Instruction::Cmp(op1, Operand::Reg(Reg::R11)),
+                            ],
+
+                            instr => vec![instr],
+                        })
+                        .collect::<Vec<_>>(),
+                );
+
+                // restore caller-saved registers
+                comment!(instructions, "Restoring caller-saved registers");
+                for reg in ARG_REGISTERS.iter().rev() {
+                    instructions.push(Instruction::Pop(Operand::Reg(*reg)));
+                }
+                instructions.push(Instruction::Pop(Operand::Reg(Reg::R11)));
+                instructions.push(Instruction::Pop(Operand::Reg(Reg::R10)));
+                instructions.push(Instruction::Pop(Operand::Reg(Reg::AX)));
 
                 Function {
                     name: function.name,
                     instructions,
+                    stack_size: function.stack_size,
                 }
             })
             .collect();
@@ -804,172 +1081,71 @@ impl Assembler {
     }
 
     pub fn replace_pseudoregisters(&self, program: Program) -> Program {
+        fn handle_operand(
+            operand: Operand,
+            stack_offset: &mut i32,
+            stack_map: &mut HashMap<String, i32>,
+        ) -> Operand {
+            match operand {
+                Operand::Pseudo(pseudo) => {
+                    if let Some(offset) = stack_map.get(&pseudo) {
+                        Operand::Stack(*offset)
+                    } else {
+                        *stack_offset -= 8;
+                        stack_map.insert(pseudo, *stack_offset);
+                        Operand::Stack(*stack_offset)
+                    }
+                }
+                _ => operand,
+            }
+        }
+
         let function_definitions = program
             .function_definitions
             .into_iter()
             .map(|function| {
-                let mut stack_offset = 0;
-                let mut stack_map = HashMap::new();
+                let mut stack_size = 0;
+                let mut pseudo_map = HashMap::new();
 
                 let mut instructions = function
                     .instructions
                     .into_iter()
                     .map(|instruction| match instruction {
                         Instruction::Mov(src, dst) => {
-                            let src = match src {
-                                Operand::Pseudo(pseudo) => {
-                                    if let Some(offset) = stack_map.get(&pseudo) {
-                                        Operand::Stack(*offset)
-                                    } else {
-                                        stack_offset -= 4;
-                                        stack_map.insert(pseudo.clone(), stack_offset);
-                                        Operand::Stack(stack_offset)
-                                    }
-                                }
-                                _ => src,
-                            };
-
-                            let dst = match dst {
-                                Operand::Pseudo(pseudo) => {
-                                    if let Some(offset) = stack_map.get(&pseudo) {
-                                        Operand::Stack(*offset)
-                                    } else {
-                                        stack_offset -= 4;
-                                        stack_map.insert(pseudo.clone(), stack_offset);
-                                        Operand::Stack(stack_offset)
-                                    }
-                                }
-                                _ => dst,
-                            };
-
+                            let src = handle_operand(src, &mut stack_size, &mut pseudo_map);
+                            let dst = handle_operand(dst, &mut stack_size, &mut pseudo_map);
                             Instruction::Mov(src, dst)
                         }
                         Instruction::Unary(op, operand) => {
-                            let operand = match operand {
-                                Operand::Pseudo(pseudo) => {
-                                    if let Some(offset) = stack_map.get(&pseudo) {
-                                        Operand::Stack(*offset)
-                                    } else {
-                                        stack_offset -= 4;
-                                        stack_map.insert(pseudo.clone(), stack_offset);
-                                        Operand::Stack(stack_offset)
-                                    }
-                                }
-                                _ => operand,
-                            };
-
+                            let operand = handle_operand(operand, &mut stack_size, &mut pseudo_map);
                             Instruction::Unary(op, operand)
                         }
-                        Instruction::AllocateStack(size) => {
-                            stack_offset -= size;
-                            Instruction::AllocateStack(size)
+                        Instruction::AllocateStack(size, comment) => {
+                            stack_size -= size;
+                            Instruction::AllocateStack(size, format!("Aligned for {}", comment))
                         }
                         Instruction::Idiv(operand) => {
-                            let operand = match operand {
-                                Operand::Pseudo(pseudo) => {
-                                    if let Some(offset) = stack_map.get(&pseudo) {
-                                        Operand::Stack(*offset)
-                                    } else {
-                                        stack_offset -= 4;
-                                        stack_map.insert(pseudo.clone(), stack_offset);
-                                        Operand::Stack(stack_offset)
-                                    }
-                                }
-                                _ => operand,
-                            };
-
+                            let operand = handle_operand(operand, &mut stack_size, &mut pseudo_map);
                             Instruction::Idiv(operand)
                         }
                         Instruction::Cdq => Instruction::Cdq,
                         Instruction::Binary(op, src1, src2) => {
-                            let src1 = match src1 {
-                                Operand::Pseudo(pseudo) => {
-                                    if let Some(offset) = stack_map.get(&pseudo) {
-                                        Operand::Stack(*offset)
-                                    } else {
-                                        stack_offset -= 4;
-                                        stack_map.insert(pseudo.clone(), stack_offset);
-                                        Operand::Stack(stack_offset)
-                                    }
-                                }
-                                _ => src1,
-                            };
-
-                            let src2 = match src2 {
-                                Operand::Pseudo(pseudo) => {
-                                    if let Some(offset) = stack_map.get(&pseudo) {
-                                        Operand::Stack(*offset)
-                                    } else {
-                                        stack_offset -= 4;
-                                        stack_map.insert(pseudo.clone(), stack_offset);
-                                        Operand::Stack(stack_offset)
-                                    }
-                                }
-                                _ => src2,
-                            };
-
+                            let src1 = handle_operand(src1, &mut stack_size, &mut pseudo_map);
+                            let src2 = handle_operand(src2, &mut stack_size, &mut pseudo_map);
                             Instruction::Binary(op, src1, src2)
                         }
                         Instruction::Cmp(op1, op2) => {
-                            let op1 = match op1 {
-                                Operand::Pseudo(pseudo) => {
-                                    if let Some(offset) = stack_map.get(&pseudo) {
-                                        Operand::Stack(*offset)
-                                    } else {
-                                        stack_offset -= 4;
-                                        stack_map.insert(pseudo.clone(), stack_offset);
-                                        Operand::Stack(stack_offset)
-                                    }
-                                }
-                                _ => op1,
-                            };
-
-                            let op2 = match op2 {
-                                Operand::Pseudo(pseudo) => {
-                                    if let Some(offset) = stack_map.get(&pseudo) {
-                                        Operand::Stack(*offset)
-                                    } else {
-                                        stack_offset -= 4;
-                                        stack_map.insert(pseudo.clone(), stack_offset);
-                                        Operand::Stack(stack_offset)
-                                    }
-                                }
-                                _ => op2,
-                            };
-
+                            let op1 = handle_operand(op1, &mut stack_size, &mut pseudo_map);
+                            let op2 = handle_operand(op2, &mut stack_size, &mut pseudo_map);
                             Instruction::Cmp(op1, op2)
                         }
                         Instruction::SetCC(condition, operand) => {
-                            let operand = match operand {
-                                Operand::Pseudo(pseudo) => {
-                                    if let Some(offset) = stack_map.get(&pseudo) {
-                                        Operand::Stack(*offset)
-                                    } else {
-                                        stack_offset -= 4;
-                                        stack_map.insert(pseudo.clone(), stack_offset);
-                                        Operand::Stack(stack_offset)
-                                    }
-                                }
-                                _ => operand,
-                            };
-
+                            let operand = handle_operand(operand, &mut stack_size, &mut pseudo_map);
                             Instruction::SetCC(condition, operand)
                         }
                         Instruction::Ret(ret) => Instruction::Ret(ret),
                         Instruction::Push(operand) => {
-                            let operand = match operand {
-                                Operand::Pseudo(pseudo) => {
-                                    if let Some(offset) = stack_map.get(&pseudo) {
-                                        Operand::Stack(*offset)
-                                    } else {
-                                        stack_offset -= 4;
-                                        stack_map.insert(pseudo.clone(), stack_offset);
-                                        Operand::Stack(stack_offset)
-                                    }
-                                }
-                                _ => operand,
-                            };
-
+                            let operand = handle_operand(operand, &mut stack_size, &mut pseudo_map);
                             Instruction::Push(operand)
                         }
                         _ => instruction,
@@ -977,12 +1153,24 @@ impl Assembler {
                     .collect::<Vec<_>>();
 
                 // Align the stack offset to 16 bytes
-                let aligned_stack_size = (-stack_offset + 15) & !15;
+                let aligned_stack_size = (-stack_size + 15) & !15;
+                let delta = aligned_stack_size + stack_size;
+                let mut new_instructions = vec![];
+                new_instructions.push(Instruction::Comment(format!(
+                    "stack_size: {stack_size} aligned: {aligned_stack_size} delta: {delta}"
+                )));
+                if delta > 0 {
+                    // new_instructions.push(Instruction::AllocateStack(
+                    //     delta,
+                    //     "Function declaration alignment".to_string(),
+                    // ));
+                }
+                new_instructions.extend(instructions);
 
-                instructions.insert(0, Instruction::AllocateStack(-stack_offset));
                 Function {
                     name: function.name,
-                    instructions,
+                    instructions: new_instructions,
+                    stack_size,
                 }
             })
             .collect();
