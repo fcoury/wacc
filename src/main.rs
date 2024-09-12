@@ -3,6 +3,7 @@ mod ir;
 mod lexer;
 mod parser;
 mod semantic;
+mod utils;
 
 use assembler::Assembler;
 use clap::Parser;
@@ -130,6 +131,10 @@ fn compile(input_file: &Path, args: &Args) -> miette::Result<()> {
     println!("\nAssembly:");
     for line in assembly.iter() {
         println!("{:?}", line);
+    }
+
+    if args.codegen {
+        return Ok(());
     }
 
     let code = assembly.to_string();
