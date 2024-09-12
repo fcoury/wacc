@@ -535,9 +535,11 @@ fn from(instruction: ir::Instruction, context: &ir::Function) -> Vec<Instruction
                 ));
             }
 
-            instructions.push(Instruction::Comment(
-                "Passing arguments in registers".to_string(),
-            ));
+            if !register_args.is_empty() {
+                instructions.push(Instruction::Comment(
+                    "Passing arguments in registers".to_string(),
+                ));
+            }
 
             // pass args in registers
             for (reg_index, tacky_arg) in register_args.iter().enumerate() {
@@ -558,6 +560,8 @@ fn from(instruction: ir::Instruction, context: &ir::Function) -> Vec<Instruction
                     Operand::Imm(_) => instructions.push(Instruction::Push(assembly_arg)),
                     Operand::Reg(_) => instructions.push(Instruction::Push(assembly_arg)),
                     _ => {
+                        comment!(instructions, "Saving return value");
+                        comment!(instructions, "Moving {assembly_arg} into EAX");
                         instructions.push(Instruction::Mov(assembly_arg, Operand::Reg(Reg::AX)));
                         instructions.push(Instruction::Push(Operand::Reg(Reg::AX)));
                     }
@@ -786,7 +790,7 @@ impl Display for Instruction {
                 }
             }
             Instruction::DeallocateStack(size) => write!(f, "\taddq\t${}, %rsp", size),
-            Instruction::Comment(comment) => write!(f, "# {}", comment),
+            Instruction::Comment(comment) => write!(f, "\t# {}", comment),
             ins => unimplemented!("{:?}", ins),
         }
     }
@@ -1105,24 +1109,20 @@ impl Assembler {
                     })
                     .collect::<Vec<_>>();
 
-                // Align the stack offset to 16 bytes
-                let aligned_stack_size = (-stack_size + 15) & !15;
-                let delta = aligned_stack_size + stack_size;
-                let mut new_instructions = vec![];
-                new_instructions.push(Instruction::Comment(format!(
-                    "stack_size: {stack_size} aligned: {aligned_stack_size} delta: {delta}"
-                )));
-                if delta > 0 {
-                    new_instructions.push(Instruction::AllocateStack(
-                        aligned_stack_size,
-                        "Function declaration alignment".to_string(),
-                    ));
+                if stack_size != 0 {
+                    let aligned_stack_size = (-stack_size + 15) & !15;
+                    instructions.insert(
+                        0,
+                        Instruction::AllocateStack(
+                            aligned_stack_size,
+                            format!("Function declaration alignment (from {stack_size})"),
+                        ),
+                    );
                 }
-                new_instructions.extend(instructions);
 
                 Function {
                     name: function.name,
-                    instructions: new_instructions,
+                    instructions, // : new_instructions,
                     stack_size,
                 }
             })
