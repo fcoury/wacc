@@ -76,6 +76,7 @@ impl From<ir::Function> for Function {
                     Operand::Pseudo(param.clone()),
                 ));
             } else {
+                // we skip the first one because it's the return address, hence the -4 and not -5
                 instructions.push(Instruction::Comment(format!(
                     "Param {i} - {param} came in stack {}",
                     (i as i32 - 4) * 8
@@ -517,8 +518,6 @@ fn from(instruction: ir::Instruction, context: &ir::Function) -> Vec<Instruction
         ir::Instruction::Jump(target) => vec![Instruction::Jmp(target)],
         ir::Instruction::Label(label) => vec![Instruction::Label(label)],
         ir::Instruction::Copy(src, dst) => vec![Instruction::Mov(src.into(), dst.into())],
-        // Registers RAX, R10, R11, and all the parameter passing registers are caller-saved;
-        // the remaining registers are callee-saved.
         ir::Instruction::FunCall(fun_name, args, dst) => {
             let mut instructions = Vec::new();
 
@@ -959,113 +958,67 @@ impl Assembler {
             .function_definitions
             .into_iter()
             .map(|function| {
-                let mut instructions = Vec::new();
-
-                comment!(instructions, "Save caller-saved registers");
-                instructions.push(Instruction::Push(Operand::Reg(Reg::AX)));
-                instructions.push(Instruction::Push(Operand::Reg(Reg::R10)));
-                instructions.push(Instruction::Push(Operand::Reg(Reg::R11)));
-
-                for reg in ARG_REGISTERS.iter() {
-                    instructions.push(Instruction::Push(Operand::Reg(*reg)));
-                }
-                // for (i, params) in context.params.iter().enumerate() {
-                //     if i < 6 {
-                //         instructions.push(Instruction::Push(Operand::Reg(ARG_REGISTERS[i])));
-                //     } else {
-                //         break;
-                //     }
-                // }
-
-                instructions.extend(
-                    function
-                        .instructions
-                        .into_iter()
-                        .flat_map(|instruction| match instruction {
-                            Instruction::Mov(src, dst) => match (src, dst) {
-                                (Operand::Stack(src), Operand::Stack(dst)) => {
-                                    vec![
-                                        Instruction::Mov(
-                                            Operand::Stack(src),
-                                            Operand::Reg(Reg::R10),
-                                        ),
-                                        Instruction::Mov(
-                                            Operand::Reg(Reg::R10),
-                                            Operand::Stack(dst),
-                                        ),
-                                    ]
-                                }
-                                (src, dst) => vec![Instruction::Mov(src, dst)],
-                            },
-                            Instruction::Idiv(operand) => vec![
-                                Instruction::Mov(operand, Operand::Reg(Reg::R10)),
-                                Instruction::Idiv(Operand::Reg(Reg::R10)),
+                let instructions = function
+                    .instructions
+                    .into_iter()
+                    .flat_map(|instruction| match instruction {
+                        Instruction::Mov(src, dst) => match (src, dst) {
+                            (Operand::Stack(src), Operand::Stack(dst)) => {
+                                vec![
+                                    Instruction::Mov(Operand::Stack(src), Operand::Reg(Reg::R10)),
+                                    Instruction::Mov(Operand::Reg(Reg::R10), Operand::Stack(dst)),
+                                ]
+                            }
+                            (src, dst) => vec![Instruction::Mov(src, dst)],
+                        },
+                        Instruction::Idiv(operand) => vec![
+                            Instruction::Mov(operand, Operand::Reg(Reg::R10)),
+                            Instruction::Idiv(Operand::Reg(Reg::R10)),
+                        ],
+                        Instruction::Binary(op, src1, src2) => match (&op, src1, src2) {
+                            (BinaryOperator::Add, Operand::Stack(src1), Operand::Stack(src2))
+                            | (BinaryOperator::Sub, Operand::Stack(src1), Operand::Stack(src2))
+                            | (
+                                BinaryOperator::ShiftLeft,
+                                Operand::Stack(src1),
+                                Operand::Stack(src2),
+                            )
+                            | (
+                                BinaryOperator::ShiftRight,
+                                Operand::Stack(src1),
+                                Operand::Stack(src2),
+                            ) => {
+                                vec![
+                                    Instruction::Mov(Operand::Stack(src1), Operand::Reg(Reg::R10)),
+                                    Instruction::Binary(
+                                        op,
+                                        Operand::Reg(Reg::R10),
+                                        Operand::Stack(src2),
+                                    ),
+                                ]
+                            }
+                            (BinaryOperator::Mul, src1, Operand::Stack(src2))
+                            | (BinaryOperator::And, src1, Operand::Stack(src2))
+                            | (BinaryOperator::Or, src1, Operand::Stack(src2))
+                            | (BinaryOperator::Xor, src1, Operand::Stack(src2)) => vec![
+                                Instruction::Mov(Operand::Stack(src2), Operand::Reg(Reg::R11)),
+                                Instruction::Binary(op, src1, Operand::Reg(Reg::R11)),
+                                Instruction::Mov(Operand::Reg(Reg::R11), Operand::Stack(src2)),
                             ],
-                            Instruction::Binary(op, src1, src2) => match (&op, src1, src2) {
-                                (
-                                    BinaryOperator::Add,
-                                    Operand::Stack(src1),
-                                    Operand::Stack(src2),
-                                )
-                                | (
-                                    BinaryOperator::Sub,
-                                    Operand::Stack(src1),
-                                    Operand::Stack(src2),
-                                )
-                                | (
-                                    BinaryOperator::ShiftLeft,
-                                    Operand::Stack(src1),
-                                    Operand::Stack(src2),
-                                )
-                                | (
-                                    BinaryOperator::ShiftRight,
-                                    Operand::Stack(src1),
-                                    Operand::Stack(src2),
-                                ) => {
-                                    vec![
-                                        Instruction::Mov(
-                                            Operand::Stack(src1),
-                                            Operand::Reg(Reg::R10),
-                                        ),
-                                        Instruction::Binary(
-                                            op,
-                                            Operand::Reg(Reg::R10),
-                                            Operand::Stack(src2),
-                                        ),
-                                    ]
-                                }
-                                (BinaryOperator::Mul, src1, Operand::Stack(src2))
-                                | (BinaryOperator::And, src1, Operand::Stack(src2))
-                                | (BinaryOperator::Or, src1, Operand::Stack(src2))
-                                | (BinaryOperator::Xor, src1, Operand::Stack(src2)) => vec![
-                                    Instruction::Mov(Operand::Stack(src2), Operand::Reg(Reg::R11)),
-                                    Instruction::Binary(op, src1, Operand::Reg(Reg::R11)),
-                                    Instruction::Mov(Operand::Reg(Reg::R11), Operand::Stack(src2)),
-                                ],
-                                (op, src1, src2) => vec![Instruction::Binary(*op, src1, src2)],
-                            },
-                            Instruction::Cmp(Operand::Stack(op1), Operand::Stack(op2)) => vec![
-                                Instruction::Mov(Operand::Stack(op1), Operand::Reg(Reg::R10)),
-                                Instruction::Cmp(Operand::Reg(Reg::R10), Operand::Stack(op2)),
-                            ],
-                            Instruction::Cmp(op1, Operand::Imm(op2)) => vec![
-                                Instruction::Mov(Operand::Imm(op2), Operand::Reg(Reg::R11)),
-                                Instruction::Cmp(op1, Operand::Reg(Reg::R11)),
-                            ],
+                            (op, src1, src2) => vec![Instruction::Binary(*op, src1, src2)],
+                        },
+                        Instruction::Cmp(Operand::Stack(op1), Operand::Stack(op2)) => vec![
+                            Instruction::Mov(Operand::Stack(op1), Operand::Reg(Reg::R10)),
+                            Instruction::Cmp(Operand::Reg(Reg::R10), Operand::Stack(op2)),
+                        ],
+                        Instruction::Cmp(op1, Operand::Imm(op2)) => vec![
+                            Instruction::Mov(Operand::Imm(op2), Operand::Reg(Reg::R11)),
+                            Instruction::Cmp(op1, Operand::Reg(Reg::R11)),
+                        ],
 
-                            instr => vec![instr],
-                        })
-                        .collect::<Vec<_>>(),
-                );
-
-                // restore caller-saved registers
-                comment!(instructions, "Restoring caller-saved registers");
-                for reg in ARG_REGISTERS.iter().rev() {
-                    instructions.push(Instruction::Pop(Operand::Reg(*reg)));
-                }
-                instructions.push(Instruction::Pop(Operand::Reg(Reg::R11)));
-                instructions.push(Instruction::Pop(Operand::Reg(Reg::R10)));
-                instructions.push(Instruction::Pop(Operand::Reg(Reg::AX)));
+                        instr => vec![instr],
+                    })
+                    .collect::<Vec<_>>();
 
                 Function {
                     name: function.name,
@@ -1091,7 +1044,7 @@ impl Assembler {
                     if let Some(offset) = stack_map.get(&pseudo) {
                         Operand::Stack(*offset)
                     } else {
-                        *stack_offset -= 8;
+                        *stack_offset -= 4;
                         stack_map.insert(pseudo, *stack_offset);
                         Operand::Stack(*stack_offset)
                     }
@@ -1160,10 +1113,10 @@ impl Assembler {
                     "stack_size: {stack_size} aligned: {aligned_stack_size} delta: {delta}"
                 )));
                 if delta > 0 {
-                    // new_instructions.push(Instruction::AllocateStack(
-                    //     delta,
-                    //     "Function declaration alignment".to_string(),
-                    // ));
+                    new_instructions.push(Instruction::AllocateStack(
+                        aligned_stack_size,
+                        "Function declaration alignment".to_string(),
+                    ));
                 }
                 new_instructions.extend(instructions);
 
