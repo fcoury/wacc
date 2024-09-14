@@ -1,30 +1,70 @@
 #![allow(dead_code)]
 use std::fmt;
 
-use miette::LabeledSpan;
+use miette::{Diagnostic, LabeledSpan, SourceCode, SourceSpan};
 use strum::EnumProperty;
 use strum_macros::EnumProperty;
+use thiserror::Error;
 
 use crate::lexer::{Token, TokenKind};
 
+#[derive(Error, Debug)]
+#[error("{message}")]
+struct ParseError {
+    message: String,
+    labels: Vec<LabeledSpan>,
+    src: String,
+}
+
+impl Diagnostic for ParseError {
+    fn labels(&self) -> Option<Box<dyn Iterator<Item = LabeledSpan> + '_>> {
+        Some(Box::new(self.labels.clone().into_iter()))
+    }
+
+    fn source_code(&self) -> Option<&dyn SourceCode> {
+        Some(&self.src)
+    }
+}
+
+macro_rules! bail {
+    ($self:ident, $msg:expr) => {
+        return Err($self.report_error(format!($msg)));
+    };
+    ($self:ident, $msg:expr, $($attr:tt)*) => {
+        return Err($self.report_error(format!(concat!($msg, " {}"), $($attr)*)));
+    };
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
-    pub function_declarations: Vec<FunctionDecl>,
+    pub declarations: Vec<Declaration>,
 }
 
 impl Program {
-    pub fn iter(&self) -> std::slice::Iter<FunctionDecl> {
-        self.function_declarations.iter()
+    pub fn iter(&self) -> std::slice::Iter<Declaration> {
+        self.declarations.iter()
     }
 }
 
 pub type Identifier = String;
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum Type {
+    Int,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum StorageClass {
+    Static,
+    Extern,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct FunctionDecl {
     pub name: String,
     pub params: Vec<VarDecl>,
     pub body: Option<Block>,
+    pub storage_classes: Vec<StorageClass>,
 }
 
 impl fmt::Display for FunctionDecl {
@@ -41,6 +81,13 @@ impl fmt::Display for FunctionDecl {
         }
         Ok(())
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct VarDecl {
+    pub name: Identifier,
+    pub init: Option<Exp>,
+    pub storage_classes: Vec<StorageClass>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -227,12 +274,6 @@ impl fmt::Display for Declaration {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct VarDecl {
-    pub name: Identifier,
-    pub init: Option<Exp>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
 pub enum Exp {
     Constant(i32),
     Var(String),
@@ -311,47 +352,57 @@ impl<'a> Parser<'a> {
     }
 
     pub fn parse_program(&mut self) -> miette::Result<Program> {
-        let mut function_declarations = vec![];
+        let mut declarations = vec![];
         while self.peek() != Some(TokenKind::Eof) {
-            let function = self.parse_function_decl(None)?;
-            function_declarations.push(function);
+            declarations.push(self.parse_declaration()?);
         }
         self.expect(TokenKind::Eof, "program")?;
 
-        let program = Program {
-            function_declarations,
-        };
+        let program = Program { declarations };
         Ok(program)
     }
 
-    pub fn parse_function_decl(
-        &mut self,
-        name: Option<Identifier>,
-    ) -> miette::Result<FunctionDecl> {
-        let name = match name {
-            Some(name) => name,
-            None => {
-                self.expect(
-                    TokenKind::IntKeyword,
-                    format!("function declaration: {name:?}"),
-                )?;
-                self.parse_identifier()?
-            }
-        };
-        self.expect(TokenKind::OpenParen, format!("function {name} declaration"))?;
-        let params = self.parse_param_list()?;
-        self.expect(
-            TokenKind::CloseParen,
-            format!("function {name} declaration"),
-        )?;
-        let body = if self.peek() == Some(TokenKind::Semicolon) {
-            self.take_token(); // skips Semicolon
-            None
-        } else {
-            Some(self.parse_block()?)
-        };
+    // TODO: Our one remaining challenge is that we can’t distinguish between
+    // <function-declaration> and <variable-declaration> symbols without parsing the whole list of
+    // type and storage-class specifiers. Once we support more complex declarations in later
+    // chapters, these two symbols will have even more parsing logic in common. This means that it
+    // isn’t practical to write separate functions to parse these two grammar symbols; instead, you
+    // should write a single function to parse both and return a declaration AST node. The one spot
+    // where you can have one kind of declaration but not the other is the initial clause of a for
+    // loop. To handle this case, just parse the whole declara- tion, then fail if it turns out to
+    // be a function declaration.
+    pub fn parse_type_and_storage_classes(&mut self) -> miette::Result<(Type, Vec<StorageClass>)> {
+        let mut storage_classes = vec![];
+        let mut types = vec![];
 
-        Ok(FunctionDecl { name, params, body })
+        loop {
+            if self.peek() == Some(TokenKind::IntKeyword) {
+                types.push(Type::Int);
+                self.take_token();
+            } else if self.peek() == Some(TokenKind::Static) {
+                self.take_token();
+                storage_classes.push(StorageClass::Static);
+            } else if self.peek() == Some(TokenKind::Extern) {
+                self.take_token();
+                storage_classes.push(StorageClass::Extern);
+            } else {
+                break;
+            }
+        }
+
+        if types.len() > 1 {
+            bail!(self, "Multiple type specifiers are not allowed");
+        }
+
+        if types.is_empty() {
+            bail!(self, "Expected type specifier");
+        }
+
+        if storage_classes.len() > 1 {
+            bail!(self, "Multiple storage classes are not allowed");
+        }
+
+        Ok((types[0].clone(), storage_classes))
     }
 
     pub fn parse_param_list(&mut self) -> miette::Result<Vec<VarDecl>> {
@@ -362,7 +413,12 @@ impl<'a> Parser<'a> {
             loop {
                 self.expect(TokenKind::IntKeyword, "parameter")?;
                 let name = self.parse_identifier()?;
-                params.push(VarDecl { name, init: None });
+                let storage_classes = vec![];
+                params.push(VarDecl {
+                    name,
+                    init: None,
+                    storage_classes,
+                });
                 if self.peek() != Some(TokenKind::Comma) {
                     break;
                 }
@@ -385,7 +441,7 @@ impl<'a> Parser<'a> {
     }
 
     pub fn parse_block_item(&mut self) -> miette::Result<BlockItem> {
-        if self.peek() == Some(TokenKind::IntKeyword) {
+        if self.is_declaration() {
             Ok(BlockItem::Declaration(self.parse_declaration()?))
         } else {
             Ok(BlockItem::Statement(self.parse_statement()?))
@@ -393,11 +449,28 @@ impl<'a> Parser<'a> {
     }
 
     pub fn parse_declaration(&mut self) -> miette::Result<Declaration> {
-        self.expect(TokenKind::IntKeyword, "declaration")?;
+        let (_typ, storage_classes) = self.parse_type_and_storage_classes()?;
         let name = self.parse_identifier()?;
         if self.peek() == Some(TokenKind::OpenParen) {
-            let function_decl = self.parse_function_decl(Some(name))?;
-            Ok(Declaration::Function(function_decl))
+            self.take_token();
+            let params = self.parse_param_list()?;
+            self.expect(
+                TokenKind::CloseParen,
+                format!("function {name} declaration"),
+            )?;
+            let body = if self.peek() == Some(TokenKind::Semicolon) {
+                self.take_token(); // skips Semicolon
+                None
+            } else {
+                Some(self.parse_block()?)
+            };
+
+            Ok(Declaration::Function(FunctionDecl {
+                name,
+                params,
+                body,
+                storage_classes,
+            }))
         } else {
             let init = if self.peek() == Some(TokenKind::Equal) {
                 self.take_token();
@@ -406,7 +479,11 @@ impl<'a> Parser<'a> {
                 None
             };
             self.expect(TokenKind::Semicolon, format!("variable {name} declaration"))?;
-            Ok(Declaration::Var(VarDecl { name, init }))
+            Ok(Declaration::Var(VarDecl {
+                name,
+                init,
+                storage_classes,
+            }))
         }
     }
 
@@ -415,17 +492,7 @@ impl<'a> Parser<'a> {
             self.tokens = &self.tokens[1..];
             Ok(name.to_string())
         } else {
-            if let Some(token) = self.peek_token() {
-                return Err(miette::miette! {
-                    labels = vec![
-                        LabeledSpan::at(token.offset..token.offset + token.len(), "found this")
-                    ],
-                    "Expected identifier",
-                }
-                .with_source_code(self.source.to_string()));
-            }
-
-            miette::bail!("Expected identifier, found {:?}", self.tokens[0]);
+            bail!(self, "Expected identifier");
         }
     }
 
@@ -519,9 +586,19 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn is_declaration(&self) -> bool {
+        let Some(next_token) = self.peek() else {
+            return false;
+        };
+
+        next_token == TokenKind::IntKeyword
+            || next_token == TokenKind::Static
+            || next_token == TokenKind::Extern
+    }
+
     pub fn parse_for_init(&mut self) -> miette::Result<ForInit> {
-        if self.peek() == Some(TokenKind::IntKeyword) {
-            self.take_token();
+        if self.is_declaration() {
+            let (_typ, storage_classes) = self.parse_type_and_storage_classes()?;
             let name = self.parse_identifier()?;
             let init = if self.peek() == Some(TokenKind::Equal) {
                 self.take_token();
@@ -529,7 +606,13 @@ impl<'a> Parser<'a> {
             } else {
                 None
             };
-            Ok(ForInit::Declaration(VarDecl { name, init }))
+
+            // TODO: assure that for init can have specifiers
+            Ok(ForInit::Declaration(VarDecl {
+                name,
+                init,
+                storage_classes,
+            }))
         } else {
             let exp = if self.peek() == Some(TokenKind::Semicolon) {
                 None
@@ -568,10 +651,7 @@ impl<'a> Parser<'a> {
                 Ok(Exp::Var(name.to_string()))
             }
         } else {
-            miette::bail!(
-                "Expected constant or unary operator, found {}",
-                self.tokens[0].origin
-            );
+            bail!(self, "Expected constant or unary operator");
         }
     }
 
@@ -768,6 +848,23 @@ impl<'a> Parser<'a> {
     fn take_token(&mut self) {
         self.tokens = &self.tokens[1..];
     }
+
+    fn report_error(&self, message: impl Into<String>) -> miette::Error {
+        let message = message.into();
+        if let Some(token) = self.peek_token() {
+            return ParseError {
+                message,
+                labels: vec![LabeledSpan::at(
+                    token.offset..token.offset + token.len(),
+                    "here",
+                )],
+                src: self.source.to_string(),
+            }
+            .into();
+        }
+
+        miette::miette!(message)
+    }
 }
 
 pub fn precedence(token: &TokenKind) -> u8 {
@@ -842,7 +939,7 @@ mod tests {
         let ast = parser.run().unwrap();
 
         let expected = Program {
-            function_declarations: vec![FunctionDecl {
+            declarations: vec![Declaration::Function(FunctionDecl {
                 name: "main".to_string(),
                 params: vec![],
                 body: Some(Block {
@@ -850,6 +947,7 @@ mod tests {
                         BlockItem::Declaration(Declaration::Var(VarDecl {
                             name: "x".to_string(),
                             init: None,
+                            storage_classes: vec![],
                         })),
                         BlockItem::Statement(Statement::Compound(Block {
                             items: vec![BlockItem::Statement(Statement::Expression(
@@ -866,7 +964,8 @@ mod tests {
                         })),
                     ],
                 }),
-            }],
+                storage_classes: vec![],
+            })],
         };
 
         assert_eq!(ast, expected);

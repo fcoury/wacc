@@ -27,21 +27,22 @@ impl Analysis {
     }
 
     fn resolve_program(&mut self) -> miette::Result<Program> {
-        let mut program = self.program.clone();
-        let mut function_declarations = vec![];
-        let mut context = Context::new();
-        let mut identifier_map = IdentifierMap::new();
-
-        for declaration in program.function_declarations {
-            function_declarations.push(self.resolve_function_declaration(
-                &mut context,
-                &mut identifier_map,
-                &declaration,
-            )?);
-        }
-
-        program.function_declarations = function_declarations;
-        Ok(program)
+        todo!()
+        // let mut program = self.program.clone();
+        // let mut function_declarations = vec![];
+        // let mut context = Context::new();
+        // let mut identifier_map = IdentifierMap::new();
+        //
+        // for declaration in program.declarations {
+        //     function_declarations.push(self.resolve_function_declaration(
+        //         &mut context,
+        //         &mut identifier_map,
+        //         &declaration,
+        //     )?);
+        // }
+        //
+        // program.declarations = function_declarations;
+        // Ok(program)
     }
 
     fn resolve_block(
@@ -165,39 +166,40 @@ impl Analysis {
         identifier_map: &mut IdentifierMap,
         decl: &FunctionDecl,
     ) -> miette::Result<FunctionDecl> {
-        if let Some(prev_entry) = identifier_map.get(&decl.name) {
-            if prev_entry.from_current_scope && !prev_entry.has_linkage {
-                miette::bail!("Function {} already declared", decl.name);
-            }
-        }
-
-        identifier_map.insert(
-            decl.name.clone(),
-            IdentifierInfo {
-                name: decl.name.clone(),
-                from_current_scope: true,
-                has_linkage: true,
-            },
-        );
-
-        let mut new_identifier_map = identifier_map.with_new_scope();
-        let new_params = decl
-            .params
-            .iter()
-            .map(|param| resolve_param(context, &decl.name, &mut new_identifier_map, param))
-            .collect::<miette::Result<Vec<_>>>()?;
-
-        let new_body = if let Some(body) = &decl.body {
-            Some(self.resolve_block(context, &mut new_identifier_map, body)?)
-        } else {
-            None
-        };
-
-        Ok(FunctionDecl {
-            name: decl.name.clone(),
-            params: new_params,
-            body: new_body,
-        })
+        todo!()
+        // if let Some(prev_entry) = identifier_map.get(&decl.name) {
+        //     if prev_entry.from_current_scope && !prev_entry.has_linkage {
+        //         miette::bail!("Function {} already declared", decl.name);
+        //     }
+        // }
+        //
+        // identifier_map.insert(
+        //     decl.name.clone(),
+        //     IdentifierInfo {
+        //         name: decl.name.clone(),
+        //         from_current_scope: true,
+        //         has_linkage: true,
+        //     },
+        // );
+        //
+        // let mut new_identifier_map = identifier_map.with_new_scope();
+        // let new_params = decl
+        //     .params
+        //     .iter()
+        //     .map(|param| resolve_param(context, &decl.name, &mut new_identifier_map, param))
+        //     .collect::<miette::Result<Vec<_>>>()?;
+        //
+        // let new_body = if let Some(body) = &decl.body {
+        //     Some(self.resolve_block(context, &mut new_identifier_map, body)?)
+        // } else {
+        //     None
+        // };
+        //
+        // Ok(FunctionDecl {
+        //     name: decl.name.clone(),
+        //     params: new_params,
+        //     body: new_body,
+        // })
     }
 
     fn resolve_declaration(
@@ -222,33 +224,34 @@ impl Analysis {
         identifier_map: &mut IdentifierMap,
         init: &crate::parser::ForInit,
     ) -> miette::Result<crate::parser::ForInit> {
-        match init {
-            crate::parser::ForInit::Declaration(declaration) => {
-                let declaration = Declaration::Var(VarDecl {
-                    name: declaration.name.clone(),
-                    init: match &declaration.init {
-                        Some(exp) => Some(resolve_exp(identifier_map, exp)?),
-                        None => None,
-                    },
-                });
-                let declaration =
-                    self.resolve_declaration(context, identifier_map, &declaration)?;
-
-                match declaration {
-                    Declaration::Var(var) => Ok(crate::parser::ForInit::Declaration(var)),
-                    Declaration::Function(fun) => {
-                        miette::bail!("Resolved function declaration for for init {}", fun.name)
-                    }
-                }
-            }
-            crate::parser::ForInit::Expression(exp) => {
-                let Some(exp) = exp else {
-                    return Ok(crate::parser::ForInit::Expression(None));
-                };
-                let exp = resolve_exp(identifier_map, exp)?;
-                Ok(crate::parser::ForInit::Expression(Some(exp)))
-            }
-        }
+        todo!()
+        // match init {
+        //     crate::parser::ForInit::Declaration(declaration) => {
+        //         let declaration = Declaration::Var(VarDecl {
+        //             name: declaration.name.clone(),
+        //             init: match &declaration.init {
+        //                 Some(exp) => Some(resolve_exp(identifier_map, exp)?),
+        //                 None => None,
+        //             },
+        //         });
+        //         let declaration =
+        //             self.resolve_declaration(context, identifier_map, &declaration)?;
+        //
+        //         match declaration {
+        //             Declaration::Var(var) => Ok(crate::parser::ForInit::Declaration(var)),
+        //             Declaration::Function(fun) => {
+        //                 miette::bail!("Resolved function declaration for for init {}", fun.name)
+        //             }
+        //         }
+        //     }
+        //     crate::parser::ForInit::Expression(exp) => {
+        //         let Some(exp) = exp else {
+        //             return Ok(crate::parser::ForInit::Expression(None));
+        //         };
+        //         let exp = resolve_exp(identifier_map, exp)?;
+        //         Ok(crate::parser::ForInit::Expression(Some(exp)))
+        //     }
+        // }
     }
 }
 
@@ -310,28 +313,29 @@ fn resolve_param(
     identifier_map: &mut IdentifierMap,
     param: &VarDecl,
 ) -> miette::Result<VarDecl> {
-    if identifier_map.overrides(&param.name) {
-        miette::bail!(
-            "Duplicate param {} for function {}",
-            param.name,
-            function_name
-        );
-    }
-
-    let unique_name = context.next_var(&param.name);
-    identifier_map.insert(
-        param.name.clone(),
-        IdentifierInfo {
-            name: unique_name.clone(),
-            from_current_scope: true,
-            has_linkage: false,
-        },
-    );
-
-    Ok(VarDecl {
-        name: unique_name,
-        init: None,
-    })
+    todo!()
+    // if identifier_map.overrides(&param.name) {
+    //     miette::bail!(
+    //         "Duplicate param {} for function {}",
+    //         param.name,
+    //         function_name
+    //     );
+    // }
+    //
+    // let unique_name = context.next_var(&param.name);
+    // identifier_map.insert(
+    //     param.name.clone(),
+    //     IdentifierInfo {
+    //         name: unique_name.clone(),
+    //         from_current_scope: true,
+    //         has_linkage: false,
+    //     },
+    // );
+    //
+    // Ok(VarDecl {
+    //     name: unique_name,
+    //     init: None,
+    // })
 }
 
 fn resolve_var_declaration(
@@ -339,29 +343,30 @@ fn resolve_var_declaration(
     identifier_map: &mut IdentifierMap,
     declaration: &VarDecl,
 ) -> miette::Result<VarDecl> {
-    if identifier_map.overrides(&declaration.name) {
-        miette::bail!("Variable {} already declared", declaration.name)
-    }
-
-    let unique_name = context.next_var(&declaration.name);
-    identifier_map.insert(
-        declaration.name.clone(),
-        IdentifierInfo {
-            name: unique_name.clone(),
-            from_current_scope: true,
-            has_linkage: false,
-        },
-    );
-
-    let init = match &declaration.init {
-        Some(exp) => Some(resolve_exp(identifier_map, exp)?),
-        None => None,
-    };
-
-    Ok(VarDecl {
-        name: unique_name,
-        init,
-    })
+    todo!()
+    // if identifier_map.overrides(&declaration.name) {
+    //     miette::bail!("Variable {} already declared", declaration.name)
+    // }
+    //
+    // let unique_name = context.next_var(&declaration.name);
+    // identifier_map.insert(
+    //     declaration.name.clone(),
+    //     IdentifierInfo {
+    //         name: unique_name.clone(),
+    //         from_current_scope: true,
+    //         has_linkage: false,
+    //     },
+    // );
+    //
+    // let init = match &declaration.init {
+    //     Some(exp) => Some(resolve_exp(identifier_map, exp)?),
+    //     None => None,
+    // };
+    //
+    // Ok(VarDecl {
+    //     name: unique_name,
+    //     init,
+    // })
 }
 
 fn resolve_exp(identifier_map: &IdentifierMap, exp: &Exp) -> miette::Result<Exp> {
@@ -453,28 +458,34 @@ mod test {
     #[test]
     fn test_analysis() {
         let program = Program {
-            function_declarations: vec![FunctionDecl {
+            declarations: vec![Declaration::Function(FunctionDecl {
                 name: "main".to_string(),
                 params: vec![],
                 body: Some(Block {
                     items: vec![BlockItem::Declaration(Declaration::Var(VarDecl {
                         name: "x".to_string(),
                         init: None,
+                        storage_classes: vec![],
                     }))],
                 }),
-            }],
+                storage_classes: vec![],
+            })],
         };
 
         let mut analysis = Analysis::new(program);
         let program = analysis.run().unwrap();
-        let body = program.function_declarations[0].body.clone().unwrap();
+        let Declaration::Function(main) = &program.declarations[0] else {
+            panic!("Not a function");
+        };
+        let body = main.body.clone().unwrap();
 
         assert_eq!(body.len(), 1);
         assert_eq!(
             body.items[0],
             BlockItem::Declaration(Declaration::Var(VarDecl {
                 name: "x_0".to_string(),
-                init: None
+                init: None,
+                storage_classes: vec![],
             }))
         );
     }
@@ -482,7 +493,7 @@ mod test {
     #[test]
     fn test_dupe_var() {
         let program = Program {
-            function_declarations: vec![FunctionDecl {
+            declarations: vec![Declaration::Function(FunctionDecl {
                 name: "main".to_string(),
                 params: vec![],
                 body: Some(Block {
@@ -490,14 +501,17 @@ mod test {
                         BlockItem::Declaration(Declaration::Var(VarDecl {
                             name: "x".to_string(),
                             init: None,
+                            storage_classes: vec![],
                         })),
                         BlockItem::Declaration(Declaration::Var(VarDecl {
                             name: "x".to_string(),
                             init: None,
+                            storage_classes: vec![],
                         })),
                     ],
                 }),
-            }],
+                storage_classes: vec![],
+            })],
         };
 
         let mut analysis = Analysis::new(program);
@@ -529,14 +543,18 @@ mod test {
 
         let mut analysis = Analysis::new(program);
         let program = analysis.run().unwrap();
-        let body = program.function_declarations[0].body.clone().unwrap();
+        let Declaration::Function(main) = &program.declarations[0] else {
+            panic!("Not a function");
+        };
+        let body = main.body.clone().unwrap();
 
         assert_eq!(body.len(), 2);
         assert_eq!(
             body.items[0],
             BlockItem::Declaration(Declaration::Var(VarDecl {
                 name: "x_0".to_string(),
-                init: None
+                init: None,
+                storage_classes: vec![],
             }))
         );
         assert_eq!(
@@ -544,7 +562,8 @@ mod test {
             BlockItem::Statement(Statement::Compound(Block::new(vec![
                 BlockItem::Declaration(Declaration::Var(VarDecl {
                     name: "x_1".to_string(),
-                    init: None
+                    init: None,
+                    storage_classes: vec![],
                 }))
             ])))
         );

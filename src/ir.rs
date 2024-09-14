@@ -19,16 +19,17 @@ impl TryFrom<parser::Program> for Program {
     type Error = miette::Error;
 
     fn try_from(program: parser::Program) -> miette::Result<Self> {
-        let function_definitions = program
-            .function_declarations
-            .into_iter()
-            .filter(|fd| fd.body.is_some())
-            .map(|d| d.try_into())
-            .collect::<Result<Vec<_>, _>>()?;
-
-        Ok(Program {
-            function_definitions,
-        })
+        todo!()
+        // let function_definitions = program
+        //     .declarations
+        //     .into_iter()
+        //     .filter(|fd| fd.body.is_some())
+        //     .map(|d| d.try_into())
+        //     .collect::<Result<Vec<_>, _>>()?;
+        //
+        // Ok(Program {
+        //     function_definitions,
+        // })
     }
 }
 
@@ -636,7 +637,7 @@ mod tests {
     #[test]
     fn test_constant() {
         let program = parser::Program {
-            function_declarations: vec![parser::FunctionDecl {
+            declarations: vec![parser::Declaration::Function(parser::FunctionDecl {
                 name: "main".to_string(),
                 params: vec![],
                 body: Some(Block {
@@ -644,7 +645,8 @@ mod tests {
                         parser::Exp::Constant(3),
                     ))],
                 }),
-            }],
+                storage_classes: vec![],
+            })],
         };
         let program = Ir::new(program).run().unwrap();
         let instr = program
@@ -662,7 +664,7 @@ mod tests {
     #[test]
     fn test_unary_var_var() {
         let program = parser::Program {
-            function_declarations: vec![parser::FunctionDecl {
+            declarations: vec![parser::Declaration::Function(parser::FunctionDecl {
                 name: "main".to_string(),
                 params: vec![],
                 body: Some(Block {
@@ -673,7 +675,8 @@ mod tests {
                         ),
                     ))],
                 }),
-            }],
+                storage_classes: vec![],
+            })],
         };
 
         let program = Ir::new(program).run().unwrap();

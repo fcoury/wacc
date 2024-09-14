@@ -3,14 +3,17 @@ use crate::parser::{Block, BlockItem, Declaration, FunctionDecl, Program, Statem
 use super::Context;
 
 pub fn label_loops(program: &Program) -> miette::Result<Program> {
-    let mut function_declarations = Vec::with_capacity(program.function_declarations.len());
-    for func_decl in program.iter() {
-        function_declarations.push(label_function_declarations(func_decl)?);
+    let mut declarations = Vec::with_capacity(program.declarations.len());
+    for decl in program.iter() {
+        match decl {
+            Declaration::Var(decl) => declarations.push(Declaration::Var(decl.clone())),
+            Declaration::Function(func_decl) => declarations.push(Declaration::Function(
+                label_function_declarations(func_decl)?,
+            )),
+        }
     }
 
-    Ok(Program {
-        function_declarations,
-    })
+    Ok(Program { declarations })
 }
 
 // TODO: can we return a Cow-like thing here, where we only instantiate a FuncDecl if we need to
@@ -23,6 +26,7 @@ fn label_function_declarations(func_decl: &FunctionDecl) -> miette::Result<Funct
             name: func_decl.name.clone(),
             params: func_decl.params.clone(),
             body: Some(body),
+            storage_classes: func_decl.storage_classes.clone(),
         })
     } else {
         Ok(func_decl.clone())

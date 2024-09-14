@@ -72,17 +72,18 @@ impl TypeMap {
 }
 
 pub fn type_check_program(program: &Program) -> miette::Result<()> {
-    let mut global_fn_map = HashMap::new();
-    let mut type_info = TypeMap::new();
-    for declaration in program.iter() {
-        type_check_declaration(
-            &mut type_info,
-            &mut global_fn_map,
-            &Declaration::Function(declaration.clone()),
-        )?;
-    }
-
-    Ok(())
+    todo!()
+    // let mut global_fn_map = HashMap::new();
+    // let mut type_info = TypeMap::new();
+    // for declaration in program.iter() {
+    //     type_check_declaration(
+    //         &mut type_info,
+    //         &mut global_fn_map,
+    //         &Declaration::Function(declaration.clone()),
+    //     )?;
+    // }
+    //
+    // Ok(())
 }
 
 fn type_check_block(
@@ -211,11 +212,16 @@ fn type_check_statement(
             let mut type_info = type_info.with_new_scope(false);
             if let Some(init) = init {
                 match init {
-                    ForInit::Declaration(VarDecl { name, init }) => {
-                        type_info.insert(name.clone(), TypeInfo::Variable);
-                        if let Some(init) = init {
-                            type_check_expr(&mut type_info, init)?;
-                        }
+                    ForInit::Declaration(VarDecl {
+                        name,
+                        init,
+                        storage_classes,
+                    }) => {
+                        todo!()
+                        // type_info.insert(name.clone(), TypeInfo::Variable);
+                        // if let Some(init) = init {
+                        //     type_check_expr(&mut type_info, init)?;
+                        // }
                     }
                     ForInit::Expression(Some(exp)) => type_check_expr(&mut type_info, exp)?,
                     ForInit::Expression(None) => (),
