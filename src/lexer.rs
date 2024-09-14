@@ -30,6 +30,8 @@ pub enum TokenKind {
     For,
     Break,
     Continue,
+    Static,
+    Extern,
 
     // then operators
     AmpersandAmpersand,
@@ -88,6 +90,8 @@ impl TokenKind {
             TokenKind::For => Some(Regex::new(r"^for\b").unwrap()),
             TokenKind::Break => Some(Regex::new(r"^break\b").unwrap()),
             TokenKind::Continue => Some(Regex::new(r"^continue\b").unwrap()),
+            TokenKind::Static => Some(Regex::new(r"^static\b").unwrap()),
+            TokenKind::Extern => Some(Regex::new(r"^extern\b").unwrap()),
             TokenKind::AmpersandAmpersand => Some(Regex::new(r"^\&\&").unwrap()),
             TokenKind::PipePipe => Some(Regex::new(r"^\|\|").unwrap()),
             TokenKind::EqualEqual => Some(Regex::new(r"^==").unwrap()),
