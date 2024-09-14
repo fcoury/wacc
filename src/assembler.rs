@@ -35,6 +35,7 @@ impl Display for Program {
         for def in &self.function_definitions {
             write!(f, "{}", def);
         }
+        Ok(())
     }
 
     #[cfg(target_os = "linux")]
