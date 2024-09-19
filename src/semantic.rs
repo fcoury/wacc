@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 
 use loop_labeling::label_loops;
-use type_check::type_check_program;
+use type_check::typecheck_program;
 
 use crate::parser::{
-    Block, BlockItem, Declaration, Exp, FunctionDecl, Program, Statement, VarDecl,
+    Block, BlockItem, Declaration, Exp, ForInit, FunctionDecl, Program, Statement, StorageClass,
+    Type, VarDecl,
 };
 
 mod loop_labeling;
@@ -22,27 +23,85 @@ impl Analysis {
     pub fn run(&mut self) -> miette::Result<Program> {
         let program = self.resolve_program()?;
         let program = label_loops(&program)?;
-        type_check_program(&program)?;
+        typecheck_program(&program)?;
         Ok(program)
     }
 
     fn resolve_program(&mut self) -> miette::Result<Program> {
-        todo!()
-        // let mut program = self.program.clone();
-        // let mut function_declarations = vec![];
-        // let mut context = Context::new();
-        // let mut identifier_map = IdentifierMap::new();
-        //
-        // for declaration in program.declarations {
-        //     function_declarations.push(self.resolve_function_declaration(
-        //         &mut context,
-        //         &mut identifier_map,
-        //         &declaration,
-        //     )?);
-        // }
-        //
-        // program.declarations = function_declarations;
-        // Ok(program)
+        let mut program = self.program.clone();
+        let mut declarations = vec![];
+        let mut context = Context::new();
+        let mut identifier_map = IdentifierMap::new();
+
+        for declaration in program.declarations {
+            declarations.push(match declaration {
+                Declaration::Function(fun) => Declaration::Function(
+                    self.resolve_function_declaration(&mut context, &mut identifier_map, &fun)?,
+                ),
+                Declaration::Var(var) => Declaration::Var(
+                    self.resolve_file_scope_variable_declaration(&var, &mut identifier_map),
+                ),
+            })
+        }
+
+        program.declarations = declarations;
+        Ok(program)
+    }
+
+    fn resolve_file_scope_variable_declaration(
+        &mut self,
+        decl: &VarDecl,
+        identifier_map: &mut IdentifierMap,
+    ) -> VarDecl {
+        identifier_map.insert(
+            decl.name.clone(),
+            IdentifierInfo {
+                name: decl.name.clone(),
+                from_current_scope: true,
+                has_linkage: true,
+            },
+        );
+
+        decl.clone()
+    }
+
+    fn resolve_local_variable_declaration(
+        &self,
+        context: &mut Context,
+        identifier_map: &mut IdentifierMap,
+        decl: &VarDecl,
+    ) -> miette::Result<VarDecl> {
+        if let Some(prev_entry) = identifier_map.get(&decl.name) {
+            if prev_entry.from_current_scope
+                && !(prev_entry.has_linkage && decl.storage_class == Some(StorageClass::Extern))
+            {
+                // TODO: improve diagnostics when reporting this error
+                miette::bail!("Conflicting local declarations for variable {}", decl.name);
+            }
+        }
+
+        if decl.storage_class == Some(StorageClass::Extern) {
+            identifier_map.insert(
+                decl.name.clone(),
+                IdentifierInfo {
+                    name: decl.name.clone(),
+                    from_current_scope: true,
+                    has_linkage: true,
+                },
+            );
+            Ok(decl.clone())
+        } else {
+            let unique_name = context.next_var(&decl.name);
+            identifier_map.insert(
+                decl.name.clone(),
+                IdentifierInfo {
+                    name: unique_name,
+                    from_current_scope: true,
+                    has_linkage: false,
+                },
+            );
+            Ok(decl.clone())
+        }
     }
 
     fn resolve_block(
@@ -54,9 +113,20 @@ impl Analysis {
         let mut items = Vec::with_capacity(block.len());
         for block_item in block.iter() {
             match block_item {
-                BlockItem::Declaration(declaration) => items.push(BlockItem::Declaration(
-                    self.resolve_declaration(context, identifier_map, declaration)?,
-                )),
+                BlockItem::Declaration(Declaration::Var(declaration)) => {
+                    items.push(BlockItem::Declaration(Declaration::Var(
+                        self.resolve_local_variable_declaration(
+                            context,
+                            identifier_map,
+                            declaration,
+                        )?,
+                    )))
+                }
+                BlockItem::Declaration(Declaration::Function(declaration)) => {
+                    items.push(BlockItem::Declaration(Declaration::Function(
+                        self.resolve_function_declaration(context, identifier_map, declaration)?,
+                    )))
+                }
                 BlockItem::Statement(statement) => {
                     let statement = self.resolve_statement(context, identifier_map, statement)?;
                     items.push(BlockItem::Statement(statement))
@@ -160,46 +230,47 @@ impl Analysis {
         Ok(statement)
     }
 
+    // page 176, listing 9-19
     fn resolve_function_declaration(
         &mut self,
         context: &mut Context,
         identifier_map: &mut IdentifierMap,
         decl: &FunctionDecl,
     ) -> miette::Result<FunctionDecl> {
-        todo!()
-        // if let Some(prev_entry) = identifier_map.get(&decl.name) {
-        //     if prev_entry.from_current_scope && !prev_entry.has_linkage {
-        //         miette::bail!("Function {} already declared", decl.name);
-        //     }
-        // }
-        //
-        // identifier_map.insert(
-        //     decl.name.clone(),
-        //     IdentifierInfo {
-        //         name: decl.name.clone(),
-        //         from_current_scope: true,
-        //         has_linkage: true,
-        //     },
-        // );
-        //
-        // let mut new_identifier_map = identifier_map.with_new_scope();
-        // let new_params = decl
-        //     .params
-        //     .iter()
-        //     .map(|param| resolve_param(context, &decl.name, &mut new_identifier_map, param))
-        //     .collect::<miette::Result<Vec<_>>>()?;
-        //
-        // let new_body = if let Some(body) = &decl.body {
-        //     Some(self.resolve_block(context, &mut new_identifier_map, body)?)
-        // } else {
-        //     None
-        // };
-        //
-        // Ok(FunctionDecl {
-        //     name: decl.name.clone(),
-        //     params: new_params,
-        //     body: new_body,
-        // })
+        if let Some(prev_entry) = identifier_map.get(&decl.name) {
+            if prev_entry.from_current_scope && !prev_entry.has_linkage {
+                miette::bail!("Function {} already declared", decl.name);
+            }
+        }
+
+        identifier_map.insert(
+            decl.name.clone(),
+            IdentifierInfo {
+                name: decl.name.clone(),
+                from_current_scope: true,
+                has_linkage: true,
+            },
+        );
+
+        let mut new_identifier_map = identifier_map.with_new_scope();
+        let new_params = decl
+            .params
+            .iter()
+            .map(|param| resolve_param(context, &decl.name, &mut new_identifier_map, param))
+            .collect::<miette::Result<Vec<_>>>()?;
+
+        let new_body = if let Some(body) = &decl.body {
+            Some(self.resolve_block(context, &mut new_identifier_map, body)?)
+        } else {
+            None
+        };
+
+        Ok(FunctionDecl {
+            name: decl.name.clone(),
+            params: new_params,
+            body: new_body,
+            storage_class: decl.storage_class.clone(),
+        })
     }
 
     fn resolve_declaration(
@@ -224,34 +295,35 @@ impl Analysis {
         identifier_map: &mut IdentifierMap,
         init: &crate::parser::ForInit,
     ) -> miette::Result<crate::parser::ForInit> {
-        todo!()
-        // match init {
-        //     crate::parser::ForInit::Declaration(declaration) => {
-        //         let declaration = Declaration::Var(VarDecl {
-        //             name: declaration.name.clone(),
-        //             init: match &declaration.init {
-        //                 Some(exp) => Some(resolve_exp(identifier_map, exp)?),
-        //                 None => None,
-        //             },
-        //         });
-        //         let declaration =
-        //             self.resolve_declaration(context, identifier_map, &declaration)?;
-        //
-        //         match declaration {
-        //             Declaration::Var(var) => Ok(crate::parser::ForInit::Declaration(var)),
-        //             Declaration::Function(fun) => {
-        //                 miette::bail!("Resolved function declaration for for init {}", fun.name)
-        //             }
-        //         }
-        //     }
-        //     crate::parser::ForInit::Expression(exp) => {
-        //         let Some(exp) = exp else {
-        //             return Ok(crate::parser::ForInit::Expression(None));
-        //         };
-        //         let exp = resolve_exp(identifier_map, exp)?;
-        //         Ok(crate::parser::ForInit::Expression(Some(exp)))
-        //     }
-        // }
+        match init {
+            ForInit::Declaration(declaration) => {
+                let declaration = Declaration::Var(VarDecl {
+                    name: declaration.name.clone(),
+                    typ: Type::Int,
+                    init: match &declaration.init {
+                        Some(exp) => Some(resolve_exp(identifier_map, exp)?),
+                        None => None,
+                    },
+                    storage_class: declaration.storage_class.clone(),
+                });
+                let declaration =
+                    self.resolve_declaration(context, identifier_map, &declaration)?;
+
+                match declaration {
+                    Declaration::Var(var) => Ok(ForInit::Declaration(var)),
+                    Declaration::Function(fun) => {
+                        miette::bail!("Resolved function declaration for for init {}", fun.name)
+                    }
+                }
+            }
+            ForInit::Expression(exp) => {
+                let Some(exp) = exp else {
+                    return Ok(ForInit::Expression(None));
+                };
+                let exp = resolve_exp(identifier_map, exp)?;
+                Ok(ForInit::Expression(Some(exp)))
+            }
+        }
     }
 }
 
@@ -313,29 +385,30 @@ fn resolve_param(
     identifier_map: &mut IdentifierMap,
     param: &VarDecl,
 ) -> miette::Result<VarDecl> {
-    todo!()
-    // if identifier_map.overrides(&param.name) {
-    //     miette::bail!(
-    //         "Duplicate param {} for function {}",
-    //         param.name,
-    //         function_name
-    //     );
-    // }
-    //
-    // let unique_name = context.next_var(&param.name);
-    // identifier_map.insert(
-    //     param.name.clone(),
-    //     IdentifierInfo {
-    //         name: unique_name.clone(),
-    //         from_current_scope: true,
-    //         has_linkage: false,
-    //     },
-    // );
-    //
-    // Ok(VarDecl {
-    //     name: unique_name,
-    //     init: None,
-    // })
+    if identifier_map.overrides(&param.name) {
+        miette::bail!(
+            "Duplicate param {} for function {}",
+            param.name,
+            function_name
+        );
+    }
+
+    let unique_name = context.next_var(&param.name);
+    identifier_map.insert(
+        param.name.clone(),
+        IdentifierInfo {
+            name: unique_name.clone(),
+            from_current_scope: true,
+            has_linkage: false,
+        },
+    );
+
+    Ok(VarDecl {
+        name: unique_name,
+        typ: Type::Int,
+        init: None,
+        storage_class: param.storage_class.clone(),
+    })
 }
 
 fn resolve_var_declaration(
@@ -343,30 +416,31 @@ fn resolve_var_declaration(
     identifier_map: &mut IdentifierMap,
     declaration: &VarDecl,
 ) -> miette::Result<VarDecl> {
-    todo!()
-    // if identifier_map.overrides(&declaration.name) {
-    //     miette::bail!("Variable {} already declared", declaration.name)
-    // }
-    //
-    // let unique_name = context.next_var(&declaration.name);
-    // identifier_map.insert(
-    //     declaration.name.clone(),
-    //     IdentifierInfo {
-    //         name: unique_name.clone(),
-    //         from_current_scope: true,
-    //         has_linkage: false,
-    //     },
-    // );
-    //
-    // let init = match &declaration.init {
-    //     Some(exp) => Some(resolve_exp(identifier_map, exp)?),
-    //     None => None,
-    // };
-    //
-    // Ok(VarDecl {
-    //     name: unique_name,
-    //     init,
-    // })
+    if identifier_map.overrides(&declaration.name) {
+        miette::bail!("Variable {} already declared", declaration.name)
+    }
+
+    let unique_name = context.next_var(&declaration.name);
+    identifier_map.insert(
+        declaration.name.clone(),
+        IdentifierInfo {
+            name: unique_name.clone(),
+            from_current_scope: true,
+            has_linkage: false,
+        },
+    );
+
+    let init = match &declaration.init {
+        Some(exp) => Some(resolve_exp(identifier_map, exp)?),
+        None => None,
+    };
+
+    Ok(VarDecl {
+        name: unique_name,
+        typ: Type::Int,
+        init,
+        storage_class: declaration.storage_class.clone(),
+    })
 }
 
 fn resolve_exp(identifier_map: &IdentifierMap, exp: &Exp) -> miette::Result<Exp> {
@@ -412,6 +486,7 @@ fn resolve_exp(identifier_map: &IdentifierMap, exp: &Exp) -> miette::Result<Exp>
             ))
         }
         Exp::FunctionCall(fun_name, args) => {
+            // page 175, listing 9-18
             if let Some(identifier_info) = identifier_map.get(fun_name) {
                 let new_args = args
                     .iter()
@@ -464,11 +539,12 @@ mod test {
                 body: Some(Block {
                     items: vec![BlockItem::Declaration(Declaration::Var(VarDecl {
                         name: "x".to_string(),
+                        typ: Type::Int,
                         init: None,
-                        storage_classes: vec![],
+                        storage_class: None,
                     }))],
                 }),
-                storage_classes: vec![],
+                storage_class: None,
             })],
         };
 
@@ -484,8 +560,9 @@ mod test {
             body.items[0],
             BlockItem::Declaration(Declaration::Var(VarDecl {
                 name: "x_0".to_string(),
+                typ: Type::Int,
                 init: None,
-                storage_classes: vec![],
+                storage_class: None,
             }))
         );
     }
@@ -500,17 +577,19 @@ mod test {
                     items: vec![
                         BlockItem::Declaration(Declaration::Var(VarDecl {
                             name: "x".to_string(),
+                            typ: Type::Int,
                             init: None,
-                            storage_classes: vec![],
+                            storage_class: None,
                         })),
                         BlockItem::Declaration(Declaration::Var(VarDecl {
                             name: "x".to_string(),
+                            typ: Type::Int,
                             init: None,
-                            storage_classes: vec![],
+                            storage_class: None,
                         })),
                     ],
                 }),
-                storage_classes: vec![],
+                storage_class: None,
             })],
         };
 
@@ -553,8 +632,9 @@ mod test {
             body.items[0],
             BlockItem::Declaration(Declaration::Var(VarDecl {
                 name: "x_0".to_string(),
+                typ: Type::Int,
                 init: None,
-                storage_classes: vec![],
+                storage_class: None,
             }))
         );
         assert_eq!(
@@ -562,8 +642,9 @@ mod test {
             BlockItem::Statement(Statement::Compound(Block::new(vec![
                 BlockItem::Declaration(Declaration::Var(VarDecl {
                     name: "x_1".to_string(),
+                    typ: Type::Int,
                     init: None,
-                    storage_classes: vec![],
+                    storage_class: None,
                 }))
             ])))
         );

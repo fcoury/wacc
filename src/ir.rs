@@ -645,7 +645,7 @@ mod tests {
                         parser::Exp::Constant(3),
                     ))],
                 }),
-                storage_classes: vec![],
+                storage_class: None,
             })],
         };
         let program = Ir::new(program).run().unwrap();
@@ -675,7 +675,7 @@ mod tests {
                         ),
                     ))],
                 }),
-                storage_classes: vec![],
+                storage_class: None,
             })],
         };
 

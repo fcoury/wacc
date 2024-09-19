@@ -26,7 +26,7 @@ fn label_function_declarations(func_decl: &FunctionDecl) -> miette::Result<Funct
             name: func_decl.name.clone(),
             params: func_decl.params.clone(),
             body: Some(body),
-            storage_classes: func_decl.storage_classes.clone(),
+            storage_class: func_decl.storage_class.clone(),
         })
     } else {
         Ok(func_decl.clone())

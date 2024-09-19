@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 use std::fmt;
 
-use miette::{Diagnostic, LabeledSpan, SourceCode, SourceSpan};
+use miette::{Diagnostic, LabeledSpan, SourceCode};
 use strum::EnumProperty;
 use strum_macros::EnumProperty;
 use thiserror::Error;
@@ -51,6 +51,7 @@ pub type Identifier = String;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
     Int,
+    FunType(i32),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -64,7 +65,7 @@ pub struct FunctionDecl {
     pub name: String,
     pub params: Vec<VarDecl>,
     pub body: Option<Block>,
-    pub storage_classes: Vec<StorageClass>,
+    pub storage_class: Option<StorageClass>,
 }
 
 impl fmt::Display for FunctionDecl {
@@ -86,8 +87,9 @@ impl fmt::Display for FunctionDecl {
 #[derive(Debug, Clone, PartialEq)]
 pub struct VarDecl {
     pub name: Identifier,
+    pub typ: Type,
     pub init: Option<Exp>,
-    pub storage_classes: Vec<StorageClass>,
+    pub storage_class: Option<StorageClass>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -371,7 +373,9 @@ impl<'a> Parser<'a> {
     // where you can have one kind of declaration but not the other is the initial clause of a for
     // loop. To handle this case, just parse the whole declara- tion, then fail if it turns out to
     // be a function declaration.
-    pub fn parse_type_and_storage_classes(&mut self) -> miette::Result<(Type, Vec<StorageClass>)> {
+    pub fn parse_type_and_storage_classes(
+        &mut self,
+    ) -> miette::Result<(Type, Option<StorageClass>)> {
         let mut storage_classes = vec![];
         let mut types = vec![];
 
@@ -402,7 +406,7 @@ impl<'a> Parser<'a> {
             bail!(self, "Multiple storage classes are not allowed");
         }
 
-        Ok((types[0].clone(), storage_classes))
+        Ok((types[0].clone(), storage_classes.pop()))
     }
 
     pub fn parse_param_list(&mut self) -> miette::Result<Vec<VarDecl>> {
@@ -413,11 +417,11 @@ impl<'a> Parser<'a> {
             loop {
                 self.expect(TokenKind::IntKeyword, "parameter")?;
                 let name = self.parse_identifier()?;
-                let storage_classes = vec![];
                 params.push(VarDecl {
                     name,
+                    typ: Type::Int,
                     init: None,
-                    storage_classes,
+                    storage_class: None,
                 });
                 if self.peek() != Some(TokenKind::Comma) {
                     break;
@@ -449,7 +453,7 @@ impl<'a> Parser<'a> {
     }
 
     pub fn parse_declaration(&mut self) -> miette::Result<Declaration> {
-        let (_typ, storage_classes) = self.parse_type_and_storage_classes()?;
+        let (_typ, storage_class) = self.parse_type_and_storage_classes()?;
         let name = self.parse_identifier()?;
         if self.peek() == Some(TokenKind::OpenParen) {
             self.take_token();
@@ -469,7 +473,7 @@ impl<'a> Parser<'a> {
                 name,
                 params,
                 body,
-                storage_classes,
+                storage_class,
             }))
         } else {
             let init = if self.peek() == Some(TokenKind::Equal) {
@@ -481,8 +485,9 @@ impl<'a> Parser<'a> {
             self.expect(TokenKind::Semicolon, format!("variable {name} declaration"))?;
             Ok(Declaration::Var(VarDecl {
                 name,
+                typ: Type::Int,
                 init,
-                storage_classes,
+                storage_class,
             }))
         }
     }
@@ -610,8 +615,9 @@ impl<'a> Parser<'a> {
             // TODO: assure that for init can have specifiers
             Ok(ForInit::Declaration(VarDecl {
                 name,
+                typ: Type::Int,
                 init,
-                storage_classes,
+                storage_class: storage_classes,
             }))
         } else {
             let exp = if self.peek() == Some(TokenKind::Semicolon) {
@@ -946,8 +952,9 @@ mod tests {
                     items: vec![
                         BlockItem::Declaration(Declaration::Var(VarDecl {
                             name: "x".to_string(),
+                            typ: Type::Int,
                             init: None,
-                            storage_classes: vec![],
+                            storage_class: None,
                         })),
                         BlockItem::Statement(Statement::Compound(Block {
                             items: vec![BlockItem::Statement(Statement::Expression(
@@ -964,7 +971,7 @@ mod tests {
                         })),
                     ],
                 }),
-                storage_classes: vec![],
+                storage_class: None,
             })],
         };
 

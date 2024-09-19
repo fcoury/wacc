@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
-use crate::parser::{Block, BlockItem, Declaration, Exp, ForInit, Program, Statement, VarDecl};
+use crate::parser::{
+    Block, BlockItem, Declaration, Exp, ForInit, FunctionDecl, Program, Statement, StorageClass,
+    Type, VarDecl,
+};
 
 #[allow(unused)]
 #[derive(Debug, Clone)]
@@ -12,22 +15,51 @@ struct ScopeInfo {
 #[derive(Debug, Clone)]
 enum TypeInfo {
     Function(FunctionInfo),
-    Variable,
+    Variable(VariableInfo),
+}
+
+impl TypeInfo {
+    pub fn is_global(&self) -> bool {
+        match self {
+            TypeInfo::Function(fun_info) => fun_info.attrs.is_global(),
+            TypeInfo::Variable(var_info) => var_info.attrs.is_global(),
+        }
+    }
+
+    pub fn is_variable(&self) -> bool {
+        matches!(self, TypeInfo::Variable(_))
+    }
+
+    pub fn is_function(&self) -> bool {
+        matches!(self, TypeInfo::Function(_))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum CalleeScope {
+    File,
+    Block,
 }
 
 #[derive(Debug, Clone)]
 struct FunctionInfo {
     params: Vec<VarDecl>,
-    has_body: bool,
+    attrs: FunAttrs,
 }
 
 #[derive(Debug, Clone)]
-struct TypeMap {
+struct VariableInfo {
+    typ: Type,
+    attrs: VarAttrs,
+}
+
+#[derive(Debug, Clone)]
+struct SymbolMap {
     declarations: HashMap<String, ScopeInfo>,
     inside_function: bool,
 }
 
-impl TypeMap {
+impl SymbolMap {
     fn new() -> Self {
         Self {
             declarations: HashMap::new(),
@@ -49,144 +81,185 @@ impl TypeMap {
         );
     }
 
-    fn with_new_scope(&self, inside_function: bool) -> Self {
-        let inner = self
-            .declarations
-            .iter()
-            .map(|(k, v)| {
-                (
-                    k.clone(),
-                    ScopeInfo {
-                        info: v.info.clone(),
-                        from_local_scope: true,
-                    },
-                )
-            })
-            .collect();
+    // fn with_new_scope(&self, inside_function: bool) -> Self {
+    //     let inner = self
+    //         .declarations
+    //         .iter()
+    //         .map(|(k, v)| {
+    //             (
+    //                 k.clone(),
+    //                 ScopeInfo {
+    //                     info: v.info.clone(),
+    //                     from_local_scope: true,
+    //                 },
+    //             )
+    //         })
+    //         .collect();
+    //
+    //     Self {
+    //         declarations: inner,
+    //         inside_function,
+    //     }
+    // }
+}
 
-        Self {
-            declarations: inner,
-            inside_function,
+#[derive(Debug, Clone, PartialEq)]
+pub enum InitialValue {
+    Tentative,
+    Initial(i32),
+    NoInitializer,
+}
+
+// page 229, listing 10-24
+// NOTE: this doesn't seem like the correct abstraction
+// #[derive(Debug, Clone)]
+// pub enum IdentifierAttrs {
+//     FunAttr { defined: bool, global: bool },
+//     StaticAttr { init: InitialValue, global: bool },
+//     LocalAttr,
+// }
+
+#[derive(Debug, Clone)]
+pub struct FunAttrs {
+    defined: bool,
+    global: bool,
+}
+
+impl FunAttrs {
+    pub fn is_global(&self) -> bool {
+        self.global
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum VarAttrs {
+    Static { init: InitialValue, global: bool },
+    Local,
+}
+
+impl VarAttrs {
+    pub fn is_global(&self) -> bool {
+        match self {
+            VarAttrs::Static { global, .. } => *global,
+            VarAttrs::Local => true,
         }
     }
 }
 
-pub fn type_check_program(program: &Program) -> miette::Result<()> {
-    todo!()
-    // let mut global_fn_map = HashMap::new();
-    // let mut type_info = TypeMap::new();
-    // for declaration in program.iter() {
-    //     type_check_declaration(
-    //         &mut type_info,
-    //         &mut global_fn_map,
-    //         &Declaration::Function(declaration.clone()),
-    //     )?;
-    // }
-    //
-    // Ok(())
+pub fn typecheck_program(program: &Program) -> miette::Result<()> {
+    let mut symbols = SymbolMap::new();
+    println!("\n\ntypecheck_program:");
+    for line in program.iter() {
+        println!("{}", line);
+    }
+    for declaration in program.iter() {
+        match declaration {
+            Declaration::Function(fun) => {
+                typecheck_function_declaration(fun, &mut symbols, CalleeScope::File)?
+            }
+            Declaration::Var(var) => typecheck_file_scope_variable_declaration(var, &mut symbols)?,
+        }
+    }
+    println!();
+
+    Ok(())
 }
 
-fn type_check_block(
-    type_info: &mut TypeMap,
-    global_fn_map: &mut HashMap<String, FunctionInfo>,
-    block: &Block,
-) -> miette::Result<()> {
+fn typecheck_block(symbols: &mut SymbolMap, block: &Block) -> miette::Result<()> {
     for block_item in block.iter() {
         match block_item {
             BlockItem::Declaration(declaration) => {
-                type_check_declaration(type_info, global_fn_map, declaration)?
+                // typecheck_declaration(symbols, global_fn_map, declaration)?
+                match declaration {
+                    Declaration::Function(fun) => {
+                        typecheck_function_declaration(fun, symbols, CalleeScope::Block)?
+                    }
+                    Declaration::Var(var) => typecheck_local_variable_declaration(var, symbols)?,
+                }
             }
-            BlockItem::Statement(statement) => {
-                type_check_statement(type_info, global_fn_map, statement)?
-            }
+            BlockItem::Statement(statement) => typecheck_statement(symbols, statement)?,
         }
     }
 
     Ok(())
 }
 
-fn type_check_declaration(
-    type_info: &mut TypeMap,
-    global_fn_map: &mut HashMap<String, FunctionInfo>,
-    declaration: &Declaration,
+// page 232, listing 10-27
+fn typecheck_local_variable_declaration(
+    decl: &VarDecl,
+    symbols: &mut SymbolMap,
 ) -> miette::Result<()> {
-    match declaration {
-        Declaration::Var(decl) => {
-            type_info.insert(decl.name.clone(), TypeInfo::Variable);
-            if let Some(init) = &decl.init {
-                type_check_expr(type_info, init)?;
+    println!(
+        "\n ** local var - {}\ntypecheck_local_variable_declaration: {decl:?}",
+        decl.name
+    );
+    match decl.storage_class {
+        Some(StorageClass::Extern) => {
+            if decl.init.is_some() {
+                miette::bail!(
+                    "Extern variables cannot have initializers, found one for {}",
+                    decl.name
+                );
+            }
+
+            if let Some(old_decl) = symbols.get(&decl.name) {
+                let TypeInfo::Variable(_) = old_decl else {
+                    miette::bail!("Function {} redeclared as variable", decl.name);
+                };
+            } else {
+                symbols.insert(
+                    decl.name.clone(),
+                    TypeInfo::Variable(VariableInfo {
+                        typ: decl.typ.clone(),
+                        attrs: VarAttrs::Static {
+                            init: InitialValue::NoInitializer,
+                            global: true,
+                        },
+                    }),
+                );
             }
         }
-        Declaration::Function(decl) => {
-            // check if the function is nested
-            if type_info.inside_function && decl.body.is_some() {
-                miette::bail!("Nested functions are not allowed");
-            }
-
-            // checks if this function exists on the global map with different params
-            if let Some(func_info) = global_fn_map.get(&decl.name) {
-                if func_info.params.len() != decl.params.len() {
-                    let plural = if func_info.params.len() == 1 { "" } else { "s" };
+        Some(StorageClass::Static) => {
+            let initial_value = match decl.init {
+                Some(Exp::Constant(i)) => InitialValue::Initial(i),
+                None => InitialValue::Initial(0),
+                _ => {
                     miette::bail!(
-                        "Function {} already declared with {} parameter{plural}, new declaration found with {}",
+                        "Non-constant initializer on local static variable {}",
                         decl.name,
-                        func_info.params.len(),
-                        decl.params.len()
                     );
                 }
-            }
-
-            // adds the function to the global function map
-            global_fn_map.insert(
-                decl.name.clone(),
-                FunctionInfo {
-                    params: decl.params.clone(),
-                    has_body: decl.body.is_some(),
-                },
-            );
-
-            let prev_decl_with_body = if let Some(TypeInfo::Function(FunctionInfo {
-                has_body,
-                params,
-            })) = type_info.get(&decl.name)
-            {
-                // check if the function is already declared in same scope
-                if *has_body && decl.body.is_some() {
-                    miette::bail!("Function {} already declared", decl.name);
-                }
-
-                // check if the function is already declared with different number of params
-                if params.len() != decl.params.len() {
-                    let plural = if params.len() == 1 { "" } else { "s" };
-                    miette::bail!(
-                            "Function {} already declared with {} parameter{plural}, new declaration found with {}",
-                            decl.name,
-                            params.len(),
-                            decl.params.len()
-                        );
-                }
-                *has_body
-            } else {
-                false
             };
 
-            // adds the function to the scope
-            type_info.insert(
+            symbols.insert(
                 decl.name.clone(),
-                TypeInfo::Function(FunctionInfo {
-                    params: decl.params.clone(),
-                    has_body: prev_decl_with_body || decl.body.is_some(),
+                TypeInfo::Variable(VariableInfo {
+                    typ: decl.typ.clone(),
+                    attrs: VarAttrs::Static {
+                        init: initial_value,
+                        global: false,
+                    },
+                }),
+            );
+        }
+        _ => {
+            // println!("here for {}", decl.name);
+            // if let Some(old_decl) = symbols.get(&decl.name) {
+            //     let TypeInfo::Variable(_) = old_decl else {
+            //         miette::bail!("Function {} redeclared as variable", decl.name);
+            //     };
+            // }
+
+            symbols.insert(
+                decl.name.clone(),
+                TypeInfo::Variable(VariableInfo {
+                    typ: decl.typ.clone(),
+                    attrs: VarAttrs::Local,
                 }),
             );
 
-            // adds all the params as vars to the scope
-            for param in decl.params.iter() {
-                type_info.insert(param.name.clone(), TypeInfo::Variable);
-            }
-
-            if let Some(body) = &decl.body {
-                let mut type_info = type_info.with_new_scope(true);
-                type_check_block(&mut type_info, global_fn_map, body)?;
+            if let Some(exp) = &decl.init {
+                typecheck_expr(symbols, exp)?;
             }
         }
     }
@@ -194,14 +267,193 @@ fn type_check_declaration(
     Ok(())
 }
 
-fn type_check_statement(
-    type_info: &mut TypeMap,
-    global_fn_map: &mut HashMap<String, FunctionInfo>,
-    statement: &Statement,
+// page 231, listing 10-26
+fn typecheck_file_scope_variable_declaration(
+    decl: &VarDecl,
+    symbols: &mut SymbolMap,
 ) -> miette::Result<()> {
+    println!(
+        "\n ** var - {}\ntypecheck_file_scope_variable_declaration: {decl:?}",
+        decl.name
+    );
+    let mut initial_value = match decl.init {
+        Some(Exp::Constant(i)) => InitialValue::Initial(i),
+        None => match decl.storage_class {
+            Some(StorageClass::Extern) => InitialValue::NoInitializer,
+            _ => InitialValue::Tentative,
+        },
+        _ => {
+            miette::bail!("Non-constant initializer for variable {}", decl.name);
+        }
+    };
+
+    let mut global = decl.storage_class != Some(StorageClass::Static);
+    println!("prev global = {global}");
+
+    // if decl.name is in symbols:
+    //      old_decl = symbols.get(decl.name)
+    if let Some(old_decl) = symbols.get(&decl.name) {
+        let TypeInfo::Variable(old_decl) = old_decl else {
+            miette::bail!("{} is not a variable", decl.name);
+        };
+
+        // if old_decl.type != Int
+        if old_decl.typ != Type::Int {
+            miette::bail!("{} is not an int", decl.name);
+        }
+
+        // if decl.storage_class == Extern:
+        if decl.storage_class == Some(StorageClass::Extern) {
+            global = old_decl.attrs.is_global();
+        // else if old_decl.attrs.global != global:
+        } else if old_decl.attrs.is_global() != global {
+            println!("old_decl: {old_decl:?}");
+            miette::bail!("Conflicting variable linkage declaration for {}", decl.name);
+        }
+
+        if let VarAttrs::Static { init, .. } = &old_decl.attrs {
+            // if old_decl.attrs.init is a constant;
+            if let InitialValue::Initial(i) = init {
+                // if initial_value is a constant:
+                if matches!(initial_value, InitialValue::Initial(_)) {
+                    miette::bail!(
+                        "Conflicting file scope variable definitions for {}",
+                        decl.name
+                    );
+                } else {
+                    // initial_value = old_decl.attrs.init
+                    initial_value = InitialValue::Initial(*i);
+                }
+            }
+            // else if initial_value is not a constant and old_decl.attrs.init == Tentative:
+            else if !matches!(initial_value, InitialValue::Initial(_))
+                && *init == InitialValue::Tentative
+            {
+                // initial_value = Tentative
+                initial_value = InitialValue::Tentative;
+            }
+        }
+    }
+
+    let attrs = VarAttrs::Static {
+        init: initial_value,
+        global,
+    };
+    symbols.insert(
+        decl.name.clone(),
+        TypeInfo::Variable(VariableInfo {
+            typ: decl.typ.clone(),
+            attrs,
+        }),
+    );
+
+    Ok(())
+}
+
+// initial implementation:
+//      page 180, listing 9-21
+//      typecheck_function_declaration(decl, symbols)
+// modified:
+//      page 230, listing 10-26
+fn typecheck_function_declaration(
+    decl: &FunctionDecl,
+    symbols: &mut SymbolMap,
+    callee_scope: CalleeScope,
+) -> miette::Result<()> {
+    println!("\n ** {}\n{decl:?}", decl.name);
+    // check if the function is nested
+    if symbols.inside_function && decl.body.is_some() {
+        miette::bail!("Nested functions are not allowed");
+    }
+
+    let mut global = decl.storage_class != Some(StorageClass::Static);
+    let mut already_defined = false;
+
+    if callee_scope == CalleeScope::Block && decl.storage_class == Some(StorageClass::Static) {
+        miette::bail!("Static functions cannot be declared in block scope");
+    }
+
+    println!("  global: {global}");
+    println!("  symbols: {symbols:?}");
+
+    // if decl.name is in symbols:
+    if let Some(old_decl) = symbols.get(&decl.name) {
+        println!("old_decl: {:?}", old_decl);
+        // if old_decl.is_variable() && old_decl.is_global() {
+        //     miette::bail!("attempted to redeclare file scope variable {}", decl.name);
+        // }
+
+        if let TypeInfo::Function(FunctionInfo { params, attrs }) = old_decl {
+            if params.len() != decl.params.len() {
+                let plural = if params.len() == 1 { "" } else { "s" };
+                miette::bail!(
+                "Function {} already declared with {} parameter{plural}, new declaration found with {}",
+                decl.name,
+                params.len(),
+                decl.params.len()
+            );
+            }
+
+            already_defined = attrs.defined;
+
+            if attrs.global && decl.storage_class == Some(StorageClass::Static) {
+                miette::bail!(
+                    "Static function declaration for {} follows non-static",
+                    decl.name
+                );
+            }
+
+            global = attrs.global;
+
+            if attrs.defined && decl.body.is_some() {
+                miette::bail!("Function {} already declared", decl.name);
+            }
+        }
+    }
+
+    let attrs = FunAttrs {
+        defined: already_defined || decl.body.is_some(),
+        global,
+    };
+
+    // adds the function to the scope
+    symbols.insert(
+        decl.name.clone(),
+        TypeInfo::Function(FunctionInfo {
+            params: decl.params.clone(),
+            attrs,
+        }),
+    );
+
+    // adds all the params as vars to the scope
+    for param in decl.params.iter() {
+        symbols.insert(
+            param.name.clone(),
+            TypeInfo::Variable(VariableInfo {
+                typ: param.typ.clone(),
+                attrs: VarAttrs::Local,
+            }),
+        );
+    }
+
+    if let Some(body) = &decl.body {
+        let old_inside_function = symbols.inside_function;
+        symbols.inside_function = true;
+
+        // let mut symbols = symbols.with_new_scope(true);
+        typecheck_block(symbols, body)?;
+
+        symbols.inside_function = old_inside_function;
+    }
+
+    Ok(())
+}
+
+fn typecheck_statement(symbols: &mut SymbolMap, statement: &Statement) -> miette::Result<()> {
+    println!("\ntypecheck_statement: {statement:?}");
     match statement {
-        Statement::Return(exp) => type_check_expr(type_info, exp),
-        Statement::Expression(exp) => type_check_expr(type_info, exp),
+        Statement::Return(exp) => typecheck_expr(symbols, exp),
+        Statement::Expression(exp) => typecheck_expr(symbols, exp),
         Statement::For {
             init,
             condition,
@@ -209,41 +461,52 @@ fn type_check_statement(
             body,
             label: _,
         } => {
-            let mut type_info = type_info.with_new_scope(false);
+            // let mut symbols = symbols.with_new_scope(false);
             if let Some(init) = init {
                 match init {
+                    // TODO: certify that we can safely ignore storage_class here
                     ForInit::Declaration(VarDecl {
                         name,
+                        typ,
                         init,
-                        storage_classes,
+                        storage_class,
                     }) => {
-                        todo!()
-                        // type_info.insert(name.clone(), TypeInfo::Variable);
-                        // if let Some(init) = init {
-                        //     type_check_expr(&mut type_info, init)?;
-                        // }
+                        if storage_class.is_some() {
+                            miette::bail!("Storage class not allowed in for loop initializer");
+                        }
+
+                        symbols.insert(
+                            name.clone(),
+                            TypeInfo::Variable(VariableInfo {
+                                typ: typ.clone(),
+                                attrs: VarAttrs::Local,
+                            }),
+                        );
+                        if let Some(init) = init {
+                            typecheck_expr(symbols, init)?;
+                        }
                     }
-                    ForInit::Expression(Some(exp)) => type_check_expr(&mut type_info, exp)?,
+                    ForInit::Expression(Some(exp)) => typecheck_expr(symbols, exp)?,
                     ForInit::Expression(None) => (),
                 }
             }
             if let Some(condition) = condition {
-                type_check_expr(&mut type_info, condition)?;
+                typecheck_expr(symbols, condition)?;
             }
             if let Some(post) = post {
-                type_check_expr(&mut type_info, post)?;
+                typecheck_expr(symbols, post)?;
             }
-            type_check_statement(&mut type_info, global_fn_map, body)
+            typecheck_statement(symbols, body)
         }
         Statement::Compound(block) => {
-            let mut type_info = type_info.with_new_scope(false);
-            type_check_block(&mut type_info, global_fn_map, block)
+            // let mut symbols = symbols.with_new_scope(false);
+            typecheck_block(symbols, block)
         }
         Statement::If(condition, then, otherwise) => {
-            type_check_expr(type_info, condition)?;
-            type_check_statement(type_info, global_fn_map, then)?;
+            typecheck_expr(symbols, condition)?;
+            typecheck_statement(symbols, then)?;
             if let Some(otherwise) = otherwise {
-                type_check_statement(type_info, global_fn_map, otherwise)?;
+                typecheck_statement(symbols, otherwise)?;
             }
             Ok(())
         }
@@ -252,9 +515,9 @@ fn type_check_statement(
             body,
             label: _,
         } => {
-            let mut type_info = type_info.with_new_scope(false);
-            type_check_expr(&mut type_info, condition)?;
-            type_check_statement(&mut type_info, global_fn_map, body)?;
+            // let mut symbols = symbols.with_new_scope(false);
+            typecheck_expr(symbols, condition)?;
+            typecheck_statement(symbols, body)?;
 
             Ok(())
         }
@@ -263,9 +526,9 @@ fn type_check_statement(
             condition,
             label: _,
         } => {
-            let mut type_info = type_info.with_new_scope(false);
-            type_check_expr(&mut type_info, condition)?;
-            type_check_statement(&mut type_info, global_fn_map, body)?;
+            // let mut symbols = symbols.with_new_scope(false);
+            typecheck_expr(symbols, condition)?;
+            typecheck_statement(symbols, body)?;
 
             Ok(())
         }
@@ -275,10 +538,10 @@ fn type_check_statement(
     }
 }
 
-fn type_check_expr(type_info: &mut TypeMap, exp: &Exp) -> miette::Result<()> {
+fn typecheck_expr(symbols: &mut SymbolMap, exp: &Exp) -> miette::Result<()> {
     match exp {
         Exp::FunctionCall(name, args) => {
-            if let Some(TypeInfo::Function(FunctionInfo { params, .. })) = type_info.get(name) {
+            if let Some(TypeInfo::Function(FunctionInfo { params, .. })) = symbols.get(name) {
                 if params.len() != args.len() {
                     miette::bail!(
                         "Function {} expects {} arguments, found {}",
@@ -305,20 +568,23 @@ fn type_check_expr(type_info: &mut TypeMap, exp: &Exp) -> miette::Result<()> {
                 miette::bail!("Function {} not declared", name);
             }
         }
-        Exp::Var(name) => match type_info.get(name) {
-            None => miette::bail!("Variable {} not declared", name),
-            Some(TypeInfo::Function { .. }) => {
-                miette::bail!("{} is a function, not a variable", name)
+        Exp::Var(name) => {
+            println!("\ntypecheck var: {}", name);
+            match symbols.get(name) {
+                None => {}
+                Some(TypeInfo::Function { .. }) => {
+                    miette::bail!("{} is a function, not a variable", name)
+                }
+                Some(TypeInfo::Variable(_)) => (),
             }
-            Some(TypeInfo::Variable) => (),
-        },
+        }
         Exp::BinaryOperation(_, lhs, rhs) => {
-            type_check_expr(type_info, lhs)?;
-            type_check_expr(type_info, rhs)?;
+            typecheck_expr(symbols, lhs)?;
+            typecheck_expr(symbols, rhs)?;
         }
         Exp::Assignment(lhs, rhs) => {
-            type_check_expr(type_info, lhs)?;
-            type_check_expr(type_info, rhs)?;
+            typecheck_expr(symbols, lhs)?;
+            typecheck_expr(symbols, rhs)?;
         }
         _ => (),
     }
