@@ -104,19 +104,26 @@ fn compile(input_file: &Path, args: &Args) -> miette::Result<()> {
     }
 
     let mut analysis = semantic::Analysis::new(ast);
-    let ast = analysis
+    let (symbols, ast) = analysis
         .run()
         .wrap_err(format!("Error validating {}", args.input.to_string_lossy()))?;
     println!("\nAST after Semantic Pass:");
     for line in ast.iter() {
         println!("{}", line);
     }
+    println!();
+
+    println!("\nSymbols:");
+    for (name, symbol) in symbols.iter() {
+        println!("  - {name} {symbol:?}");
+    }
+    println!();
 
     if args.validate {
         return Ok(());
     }
 
-    let tacky = ir::Ir::new(ast).run()?;
+    let tacky = ir::Ir::new(ast).run(symbols)?;
     println!("\nTacky:");
     for instr in tacky.iter() {
         println!("{:?}", instr);

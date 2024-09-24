@@ -7,31 +7,20 @@ use crate::parser::{
 
 #[allow(unused)]
 #[derive(Debug, Clone)]
-struct ScopeInfo {
-    info: TypeInfo,
-    from_local_scope: bool,
+pub struct ScopeInfo {
+    pub info: TypeInfo,
+    pub from_file_scope: bool,
 }
 
 #[derive(Debug, Clone)]
-enum TypeInfo {
+pub enum TypeInfo {
     Function(FunctionInfo),
     Variable(VariableInfo),
 }
 
 impl TypeInfo {
-    pub fn is_global(&self) -> bool {
-        match self {
-            TypeInfo::Function(fun_info) => fun_info.attrs.is_global(),
-            TypeInfo::Variable(var_info) => var_info.attrs.is_global(),
-        }
-    }
-
     pub fn is_variable(&self) -> bool {
         matches!(self, TypeInfo::Variable(_))
-    }
-
-    pub fn is_function(&self) -> bool {
-        matches!(self, TypeInfo::Function(_))
     }
 }
 
@@ -42,21 +31,22 @@ enum CalleeScope {
 }
 
 #[derive(Debug, Clone)]
-struct FunctionInfo {
-    params: Vec<VarDecl>,
-    attrs: FunAttrs,
+pub struct FunctionInfo {
+    pub params: Vec<VarDecl>,
+    pub attrs: FunAttrs,
 }
 
 #[derive(Debug, Clone)]
-struct VariableInfo {
-    typ: Type,
-    attrs: VarAttrs,
+pub struct VariableInfo {
+    pub typ: Type,
+    pub attrs: VarAttrs,
 }
 
 #[derive(Debug, Clone)]
-struct SymbolMap {
-    declarations: HashMap<String, ScopeInfo>,
-    inside_function: bool,
+pub struct SymbolMap {
+    pub declarations: HashMap<String, ScopeInfo>,
+    pub inside_function: bool,
+    pub at_file_scope: bool,
 }
 
 impl SymbolMap {
@@ -64,11 +54,20 @@ impl SymbolMap {
         Self {
             declarations: HashMap::new(),
             inside_function: false,
+            at_file_scope: true,
         }
     }
 
-    fn get(&self, key: &str) -> Option<&TypeInfo> {
-        self.declarations.get(key).map(|v| &v.info)
+    fn enter_block_scope(&mut self) {
+        self.at_file_scope = false;
+    }
+
+    fn exit_block_scope(&mut self) {
+        self.at_file_scope = true;
+    }
+
+    fn get(&self, key: &str) -> Option<&ScopeInfo> {
+        self.declarations.get(key)
     }
 
     fn insert(&mut self, key: String, value: TypeInfo) {
@@ -76,31 +75,14 @@ impl SymbolMap {
             key,
             ScopeInfo {
                 info: value,
-                from_local_scope: false,
+                from_file_scope: self.at_file_scope,
             },
         );
     }
 
-    // fn with_new_scope(&self, inside_function: bool) -> Self {
-    //     let inner = self
-    //         .declarations
-    //         .iter()
-    //         .map(|(k, v)| {
-    //             (
-    //                 k.clone(),
-    //                 ScopeInfo {
-    //                     info: v.info.clone(),
-    //                     from_local_scope: true,
-    //                 },
-    //             )
-    //         })
-    //         .collect();
-    //
-    //     Self {
-    //         declarations: inner,
-    //         inside_function,
-    //     }
-    // }
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &ScopeInfo)> {
+        self.declarations.iter()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -111,7 +93,7 @@ pub enum InitialValue {
 }
 
 // page 229, listing 10-24
-// NOTE: this doesn't seem like the correct abstraction
+// NOTE: this didn't seem like the correct abstraction
 // #[derive(Debug, Clone)]
 // pub enum IdentifierAttrs {
 //     FunAttr { defined: bool, global: bool },
@@ -123,12 +105,6 @@ pub enum InitialValue {
 pub struct FunAttrs {
     defined: bool,
     global: bool,
-}
-
-impl FunAttrs {
-    pub fn is_global(&self) -> bool {
-        self.global
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -146,12 +122,8 @@ impl VarAttrs {
     }
 }
 
-pub fn typecheck_program(program: &Program) -> miette::Result<()> {
+pub fn typecheck_program(program: &Program) -> miette::Result<SymbolMap> {
     let mut symbols = SymbolMap::new();
-    println!("\n\ntypecheck_program:");
-    for line in program.iter() {
-        println!("{}", line);
-    }
     for declaration in program.iter() {
         match declaration {
             Declaration::Function(fun) => {
@@ -160,12 +132,12 @@ pub fn typecheck_program(program: &Program) -> miette::Result<()> {
             Declaration::Var(var) => typecheck_file_scope_variable_declaration(var, &mut symbols)?,
         }
     }
-    println!();
 
-    Ok(())
+    Ok(symbols)
 }
 
 fn typecheck_block(symbols: &mut SymbolMap, block: &Block) -> miette::Result<()> {
+    symbols.enter_block_scope();
     for block_item in block.iter() {
         match block_item {
             BlockItem::Declaration(declaration) => {
@@ -180,6 +152,7 @@ fn typecheck_block(symbols: &mut SymbolMap, block: &Block) -> miette::Result<()>
             BlockItem::Statement(statement) => typecheck_statement(symbols, statement)?,
         }
     }
+    symbols.exit_block_scope();
 
     Ok(())
 }
@@ -189,10 +162,6 @@ fn typecheck_local_variable_declaration(
     decl: &VarDecl,
     symbols: &mut SymbolMap,
 ) -> miette::Result<()> {
-    println!(
-        "\n ** local var - {}\ntypecheck_local_variable_declaration: {decl:?}",
-        decl.name
-    );
     match decl.storage_class {
         Some(StorageClass::Extern) => {
             if decl.init.is_some() {
@@ -203,7 +172,7 @@ fn typecheck_local_variable_declaration(
             }
 
             if let Some(old_decl) = symbols.get(&decl.name) {
-                let TypeInfo::Variable(_) = old_decl else {
+                let TypeInfo::Variable(_) = old_decl.info else {
                     miette::bail!("Function {} redeclared as variable", decl.name);
                 };
             } else {
@@ -243,13 +212,6 @@ fn typecheck_local_variable_declaration(
             );
         }
         _ => {
-            // println!("here for {}", decl.name);
-            // if let Some(old_decl) = symbols.get(&decl.name) {
-            //     let TypeInfo::Variable(_) = old_decl else {
-            //         miette::bail!("Function {} redeclared as variable", decl.name);
-            //     };
-            // }
-
             symbols.insert(
                 decl.name.clone(),
                 TypeInfo::Variable(VariableInfo {
@@ -272,10 +234,6 @@ fn typecheck_file_scope_variable_declaration(
     decl: &VarDecl,
     symbols: &mut SymbolMap,
 ) -> miette::Result<()> {
-    println!(
-        "\n ** var - {}\ntypecheck_file_scope_variable_declaration: {decl:?}",
-        decl.name
-    );
     let mut initial_value = match decl.init {
         Some(Exp::Constant(i)) => InitialValue::Initial(i),
         None => match decl.storage_class {
@@ -288,12 +246,9 @@ fn typecheck_file_scope_variable_declaration(
     };
 
     let mut global = decl.storage_class != Some(StorageClass::Static);
-    println!("prev global = {global}");
 
-    // if decl.name is in symbols:
-    //      old_decl = symbols.get(decl.name)
     if let Some(old_decl) = symbols.get(&decl.name) {
-        let TypeInfo::Variable(old_decl) = old_decl else {
+        let TypeInfo::Variable(old_decl) = &old_decl.info else {
             miette::bail!("{} is not a variable", decl.name);
         };
 
@@ -307,7 +262,6 @@ fn typecheck_file_scope_variable_declaration(
             global = old_decl.attrs.is_global();
         // else if old_decl.attrs.global != global:
         } else if old_decl.attrs.is_global() != global {
-            println!("old_decl: {old_decl:?}");
             miette::bail!("Conflicting variable linkage declaration for {}", decl.name);
         }
 
@@ -360,7 +314,6 @@ fn typecheck_function_declaration(
     symbols: &mut SymbolMap,
     callee_scope: CalleeScope,
 ) -> miette::Result<()> {
-    println!("\n ** {}\n{decl:?}", decl.name);
     // check if the function is nested
     if symbols.inside_function && decl.body.is_some() {
         miette::bail!("Nested functions are not allowed");
@@ -373,17 +326,13 @@ fn typecheck_function_declaration(
         miette::bail!("Static functions cannot be declared in block scope");
     }
 
-    println!("  global: {global}");
-    println!("  symbols: {symbols:?}");
-
     // if decl.name is in symbols:
     if let Some(old_decl) = symbols.get(&decl.name) {
-        println!("old_decl: {:?}", old_decl);
-        // if old_decl.is_variable() && old_decl.is_global() {
-        //     miette::bail!("attempted to redeclare file scope variable {}", decl.name);
-        // }
+        if old_decl.from_file_scope && old_decl.info.is_variable() {
+            miette::bail!("attempted to redeclare file scope variable {}", decl.name);
+        }
 
-        if let TypeInfo::Function(FunctionInfo { params, attrs }) = old_decl {
+        if let TypeInfo::Function(FunctionInfo { params, attrs }) = &old_decl.info {
             if params.len() != decl.params.len() {
                 let plural = if params.len() == 1 { "" } else { "s" };
                 miette::bail!(
@@ -437,6 +386,7 @@ fn typecheck_function_declaration(
     }
 
     if let Some(body) = &decl.body {
+        symbols.enter_block_scope();
         let old_inside_function = symbols.inside_function;
         symbols.inside_function = true;
 
@@ -444,13 +394,13 @@ fn typecheck_function_declaration(
         typecheck_block(symbols, body)?;
 
         symbols.inside_function = old_inside_function;
+        symbols.exit_block_scope();
     }
 
     Ok(())
 }
 
 fn typecheck_statement(symbols: &mut SymbolMap, statement: &Statement) -> miette::Result<()> {
-    println!("\ntypecheck_statement: {statement:?}");
     match statement {
         Statement::Return(exp) => typecheck_expr(symbols, exp),
         Statement::Expression(exp) => typecheck_expr(symbols, exp),
@@ -541,7 +491,9 @@ fn typecheck_statement(symbols: &mut SymbolMap, statement: &Statement) -> miette
 fn typecheck_expr(symbols: &mut SymbolMap, exp: &Exp) -> miette::Result<()> {
     match exp {
         Exp::FunctionCall(name, args) => {
-            if let Some(TypeInfo::Function(FunctionInfo { params, .. })) = symbols.get(name) {
+            if let Some(TypeInfo::Function(FunctionInfo { params, .. })) =
+                symbols.get(name).map(|x| &x.info)
+            {
                 if params.len() != args.len() {
                     miette::bail!(
                         "Function {} expects {} arguments, found {}",
@@ -568,16 +520,13 @@ fn typecheck_expr(symbols: &mut SymbolMap, exp: &Exp) -> miette::Result<()> {
                 miette::bail!("Function {} not declared", name);
             }
         }
-        Exp::Var(name) => {
-            println!("\ntypecheck var: {}", name);
-            match symbols.get(name) {
-                None => {}
-                Some(TypeInfo::Function { .. }) => {
-                    miette::bail!("{} is a function, not a variable", name)
-                }
-                Some(TypeInfo::Variable(_)) => (),
+        Exp::Var(name) => match symbols.get(name).map(|x| &x.info) {
+            None => {}
+            Some(TypeInfo::Function { .. }) => {
+                miette::bail!("{} is a function, not a variable", name)
             }
-        }
+            Some(TypeInfo::Variable(_)) => (),
+        },
         Exp::BinaryOperation(_, lhs, rhs) => {
             typecheck_expr(symbols, lhs)?;
             typecheck_expr(symbols, rhs)?;
