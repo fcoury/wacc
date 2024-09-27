@@ -123,7 +123,7 @@ fn compile(input_file: &Path, args: &Args) -> miette::Result<()> {
         return Ok(());
     }
 
-    let tacky = ir::Ir::new(ast).run(symbols)?;
+    let tacky = ir::Ir::new(ast).run(&symbols)?;
     println!("\nTacky:");
     for instr in tacky.iter() {
         println!("{:?}", instr);
@@ -134,7 +134,9 @@ fn compile(input_file: &Path, args: &Args) -> miette::Result<()> {
     }
 
     let assembler = Assembler::new(tacky);
-    let assembly = assembler.assemble().context("Failed to assemble file")?;
+    let assembly = assembler
+        .assemble(&symbols)
+        .context("Failed to assemble file")?;
     println!("\nAssembly:");
     for line in assembly.iter() {
         println!("{:?}", line);

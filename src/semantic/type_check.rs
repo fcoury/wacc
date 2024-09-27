@@ -66,7 +66,7 @@ impl SymbolMap {
         self.at_file_scope = true;
     }
 
-    fn get(&self, key: &str) -> Option<&ScopeInfo> {
+    pub fn get(&self, key: &str) -> Option<&ScopeInfo> {
         self.declarations.get(key)
     }
 

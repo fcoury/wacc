@@ -620,14 +620,14 @@ impl Ir {
         Self { program }
     }
 
-    pub fn run(self, symbols: SymbolMap) -> miette::Result<Program> {
+    pub fn run(self, symbols: &SymbolMap) -> miette::Result<Program> {
         let mut program: Program = self.program.try_into()?;
         program.top_level.extend(convert_symbols_to_tacky(symbols));
         Ok(program)
     }
 }
 
-fn convert_symbols_to_tacky(symbols: SymbolMap) -> Vec<TopLevel> {
+fn convert_symbols_to_tacky(symbols: &SymbolMap) -> Vec<TopLevel> {
     let mut tacky_defs = Vec::new();
 
     for (name, entry) in symbols.iter() {
