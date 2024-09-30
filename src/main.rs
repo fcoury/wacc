@@ -133,9 +133,9 @@ fn compile(input_file: &Path, args: &Args) -> miette::Result<()> {
         return Ok(());
     }
 
-    let assembler = Assembler::new(tacky);
+    let assembler = Assembler::new();
     let assembly = assembler
-        .assemble(&symbols)
+        .assemble(tacky, symbols)
         .context("Failed to assemble file")?;
     println!("\nAssembly:");
     for line in assembly.iter() {

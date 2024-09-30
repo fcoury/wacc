@@ -12,6 +12,15 @@ pub struct ScopeInfo {
     pub from_file_scope: bool,
 }
 
+impl ScopeInfo {
+    pub fn as_function(&self) -> Option<&FunctionInfo> {
+        match &self.info {
+            TypeInfo::Function(info) => Some(info),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum TypeInfo {
     Function(FunctionInfo),
@@ -103,8 +112,8 @@ pub enum InitialValue {
 
 #[derive(Debug, Clone)]
 pub struct FunAttrs {
-    defined: bool,
-    global: bool,
+    pub defined: bool,
+    pub global: bool,
 }
 
 #[derive(Debug, Clone)]

@@ -4,7 +4,11 @@ use std::{
     fmt::{self, Display, Formatter},
 };
 
-use crate::{ir, semantic::SymbolMap, utils::safe_split_at};
+use crate::{
+    ir,
+    semantic::{InitialValue, SymbolMap, TypeInfo, VarAttrs},
+    utils::safe_split_at,
+};
 
 #[derive(Debug, PartialEq)]
 pub enum TopLevel {
@@ -21,10 +25,10 @@ impl From<ir::TopLevel> for TopLevel {
     }
 }
 
-impl fmt::Display for TopLevel {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+impl DisplayWithSymbolMap for TopLevel {
+    fn fmt_with_symbols(&self, symbols: &SymbolMap, f: &mut Formatter) -> fmt::Result {
         match self {
-            TopLevel::Function(function) => write!(f, "{}", function),
+            TopLevel::Function(function) => function.fmt_with_symbols(symbols, f),
             TopLevel::StaticVariable(static_var) => write!(f, "{}", static_var),
         }
     }
@@ -53,9 +57,10 @@ impl fmt::Display for StaticVar {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub struct Program {
     top_level: Vec<TopLevel>,
+    symbols: SymbolMap,
 }
 
 impl Program {
@@ -64,29 +69,58 @@ impl Program {
     }
 }
 
-impl From<ir::Program> for Program {
-    fn from(program: ir::Program) -> Self {
-        Program {
-            top_level: program.top_level.into_iter().map(|f| f.into()).collect(),
+impl Display for SymbolMap {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        for (name, scope) in self.iter() {
+            if let TypeInfo::Variable(var) = &scope.info {
+                if let VarAttrs::Static { init, global } = &var.attrs {
+                    match init {
+                        InitialValue::Initial(val) => {
+                            if *global {
+                                writeln!(f, "\t.global {}", name)?;
+                            }
+                            writeln!(f, "\t.data")?;
+                            if cfg!(target_os = "macos") {
+                                writeln!(f, "_{}:", name)?;
+                            } else {
+                                writeln!(f, "{}:", name)?;
+                            }
+                            writeln!(f, "\t.long {}", val)?;
+                        }
+                        _ => {
+                            if *global {
+                                writeln!(f, "\t.global {}", name)?;
+                            }
+                            writeln!(f, "\t.bss")?;
+                            if cfg!(target_os = "macos") {
+                                writeln!(f, "\t.balign 4")?;
+                                writeln!(f, "_{}:", name)?;
+                            } else {
+                                writeln!(f, "\t.align 4")?;
+                                writeln!(f, "{}:", name)?;
+                            }
+                            writeln!(f, "\t.zero 4")?;
+                        }
+                    }
+                }
+            }
         }
+
+        Ok(())
     }
 }
 
 impl Display for Program {
-    #[cfg(not(target_os = "linux"))]
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        for def in &self.function_definitions {
-            write!(f, "{}", def);
-        }
-        Ok(())
-    }
-
-    #[cfg(target_os = "linux")]
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         for def in &self.top_level {
-            write!(f, "{}", def);
+            def.fmt_with_symbols(&self.symbols, f)?;
         }
-        writeln!(f, "\t.section .note.GNU-stack,\"\",@progbits")
+
+        if cfg!(target_os = "linux") {
+            writeln!(f, "\t.section .note.GNU-stack,\"\",@progbits")?;
+        }
+
+        Ok(())
     }
 }
 
@@ -151,10 +185,27 @@ impl From<ir::Function> for Function {
     }
 }
 
-impl Display for Function {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        writeln!(f, "\t.globl {}", self.name)?;
-        writeln!(f, "{}:", self.name)?;
+trait DisplayWithSymbolMap {
+    fn fmt_with_symbols(&self, symbols: &SymbolMap, f: &mut Formatter) -> fmt::Result;
+}
+
+impl DisplayWithSymbolMap for Function {
+    fn fmt_with_symbols(&self, symbols: &SymbolMap, f: &mut Formatter) -> fmt::Result {
+        if let Some(info) = symbols.get(&self.name) {
+            // TODO: evaluate need to error check here
+            if let Some(info) = info.as_function() {
+                if info.attrs.global {
+                    writeln!(f, "\t.global {}", self.name)?;
+                }
+            }
+        }
+
+        writeln!(f, ".text")?;
+        if cfg!(target_os = "macos") {
+            writeln!(f, "_{}:", self.name)?;
+        } else {
+            writeln!(f, "{}:", self.name)?;
+        }
         writeln!(f, "\tpushq\t%rbp")?;
         writeln!(f, "\tmovq\t%rsp, %rbp")?;
         for instruction in &self.instructions {
@@ -809,7 +860,7 @@ impl Display for Operand {
             Operand::Reg64(reg) => write!(f, "{}", reg),
             Operand::Pseudo(pseudo) => write!(f, "{}", pseudo),
             Operand::Stack(offset) => write!(f, "{}(%rbp)", offset),
-            Operand::Data(name) => write!(f, "{}", name),
+            Operand::Data(identifier) => write!(f, "{identifier}(%rip)"),
         }
     }
 }
@@ -823,44 +874,45 @@ impl From<ir::Val> for Operand {
     }
 }
 
-pub struct Assembler {
-    program: ir::Program,
-}
+pub struct Assembler;
 
 impl Assembler {
-    pub fn new(program: ir::Program) -> Assembler {
-        Assembler { program }
+    pub fn new() -> Assembler {
+        Assembler {}
     }
 
-    pub fn assemble(&self, symbols: &SymbolMap) -> miette::Result<Program> {
-        let program: Program = self.program.clone().into();
+    pub fn assemble(&self, program: ir::Program, symbols: SymbolMap) -> miette::Result<Program> {
+        let program = Program {
+            top_level: program.top_level.into_iter().map(|f| f.into()).collect(),
+            symbols,
+        };
+
         println!("\nRaw assembly:");
         for function in program.top_level.iter() {
             println!("{:?}", function);
         }
-        let program = self.replace_pseudoregisters(program, symbols);
+
+        let program = self.replace_pseudoregisters(program);
         let program = self.fixup_instructions(program);
         Ok(program)
     }
 
-    pub fn run(&self, symbols: &SymbolMap) -> miette::Result<String> {
-        let program = self.assemble(symbols)?;
-        Ok(program.to_string())
-    }
-
-    pub fn replace_pseudoregisters(&self, program: Program, symbols: &SymbolMap) -> Program {
+    pub fn replace_pseudoregisters(&self, program: Program) -> Program {
         let top_level = program
             .top_level
             .into_iter()
             .map(|top_level| match top_level {
-                TopLevel::Function(function) => {
-                    TopLevel::Function(self.replace_pseudoregisters_function(function, symbols))
-                }
+                TopLevel::Function(function) => TopLevel::Function(
+                    self.replace_pseudoregisters_function(function, &program.symbols),
+                ),
                 other => other,
             })
             .collect();
 
-        Program { top_level }
+        Program {
+            top_level,
+            symbols: program.symbols,
+        }
     }
 
     pub fn replace_pseudoregisters_function(
@@ -975,6 +1027,7 @@ impl Assembler {
 
         Program {
             top_level: function_definitions,
+            symbols: program.symbols,
         }
     }
 
