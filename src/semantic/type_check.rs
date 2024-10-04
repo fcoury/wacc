@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use crate::parser::{
-    Block, BlockItem, Declaration, Exp, ForInit, FunctionDecl, Program, Statement, StorageClass,
-    Type, VarDecl,
+    Block, BlockItem, Declaration, Exp, ForInit, FunctionDecl, Identifier, Program, Statement,
+    StorageClass, Type, VarDecl,
 };
 
 #[allow(unused)]
@@ -53,7 +53,7 @@ pub struct VariableInfo {
 
 #[derive(Debug, Clone)]
 pub struct SymbolMap {
-    pub declarations: HashMap<String, ScopeInfo>,
+    pub declarations: HashMap<Identifier, ScopeInfo>,
     pub inside_function: bool,
     pub at_file_scope: bool,
 }
@@ -75,11 +75,11 @@ impl SymbolMap {
         self.at_file_scope = true;
     }
 
-    pub fn get(&self, key: &str) -> Option<&ScopeInfo> {
+    pub fn get(&self, key: &Identifier) -> Option<&ScopeInfo> {
         self.declarations.get(key)
     }
 
-    fn insert(&mut self, key: String, value: TypeInfo) {
+    fn insert(&mut self, key: Identifier, value: TypeInfo) {
         self.declarations.insert(
             key,
             ScopeInfo {
@@ -89,7 +89,7 @@ impl SymbolMap {
         );
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (&String, &ScopeInfo)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&Identifier, &ScopeInfo)> {
         self.declarations.iter()
     }
 }
@@ -135,10 +135,12 @@ pub fn typecheck_program(program: &Program) -> miette::Result<SymbolMap> {
     let mut symbols = SymbolMap::new();
     for declaration in program.iter() {
         match declaration {
-            Declaration::Function(fun) => {
+            Declaration::Function(fun, _) => {
                 typecheck_function_declaration(fun, &mut symbols, CalleeScope::File)?
             }
-            Declaration::Var(var) => typecheck_file_scope_variable_declaration(var, &mut symbols)?,
+            Declaration::Var(var, _) => {
+                typecheck_file_scope_variable_declaration(var, &mut symbols)?
+            }
         }
     }
 
@@ -149,16 +151,16 @@ fn typecheck_block(symbols: &mut SymbolMap, block: &Block) -> miette::Result<()>
     symbols.enter_block_scope();
     for block_item in block.iter() {
         match block_item {
-            BlockItem::Declaration(declaration) => {
+            BlockItem::Declaration(declaration, _) => {
                 // typecheck_declaration(symbols, global_fn_map, declaration)?
                 match declaration {
-                    Declaration::Function(fun) => {
+                    Declaration::Function(fun, _) => {
                         typecheck_function_declaration(fun, symbols, CalleeScope::Block)?
                     }
-                    Declaration::Var(var) => typecheck_local_variable_declaration(var, symbols)?,
+                    Declaration::Var(var, _) => typecheck_local_variable_declaration(var, symbols)?,
                 }
             }
-            BlockItem::Statement(statement) => typecheck_statement(symbols, statement)?,
+            BlockItem::Statement(statement, _) => typecheck_statement(symbols, statement)?,
         }
     }
     symbols.exit_block_scope();
@@ -199,7 +201,7 @@ fn typecheck_local_variable_declaration(
         }
         Some(StorageClass::Static) => {
             let initial_value = match decl.init {
-                Some(Exp::Constant(i)) => InitialValue::Initial(i),
+                Some(Exp::Constant(i, _)) => InitialValue::Initial(i),
                 None => InitialValue::Initial(0),
                 _ => {
                     miette::bail!(
@@ -244,7 +246,7 @@ fn typecheck_file_scope_variable_declaration(
     symbols: &mut SymbolMap,
 ) -> miette::Result<()> {
     let mut initial_value = match decl.init {
-        Some(Exp::Constant(i)) => InitialValue::Initial(i),
+        Some(Exp::Constant(i, _)) => InitialValue::Initial(i),
         None => match decl.storage_class {
             Some(StorageClass::Extern) => InitialValue::NoInitializer,
             _ => InitialValue::Tentative,
@@ -411,25 +413,30 @@ fn typecheck_function_declaration(
 
 fn typecheck_statement(symbols: &mut SymbolMap, statement: &Statement) -> miette::Result<()> {
     match statement {
-        Statement::Return(exp) => typecheck_expr(symbols, exp),
-        Statement::Expression(exp) => typecheck_expr(symbols, exp),
+        Statement::Return(exp, _) => typecheck_expr(symbols, exp),
+        Statement::Expression(exp, _) => typecheck_expr(symbols, exp),
         Statement::For {
             init,
             condition,
             post,
             body,
             label: _,
+            span: _,
         } => {
             // let mut symbols = symbols.with_new_scope(false);
             if let Some(init) = init {
                 match init {
                     // TODO: certify that we can safely ignore storage_class here
-                    ForInit::Declaration(VarDecl {
-                        name,
-                        typ,
-                        init,
-                        storage_class,
-                    }) => {
+                    ForInit::Declaration(
+                        VarDecl {
+                            name,
+                            typ,
+                            init,
+                            storage_class,
+                            span: _,
+                        },
+                        _span,
+                    ) => {
                         if storage_class.is_some() {
                             miette::bail!("Storage class not allowed in for loop initializer");
                         }
@@ -445,8 +452,8 @@ fn typecheck_statement(symbols: &mut SymbolMap, statement: &Statement) -> miette
                             typecheck_expr(symbols, init)?;
                         }
                     }
-                    ForInit::Expression(Some(exp)) => typecheck_expr(symbols, exp)?,
-                    ForInit::Expression(None) => (),
+                    ForInit::Expression(Some(exp), _) => typecheck_expr(symbols, exp)?,
+                    ForInit::Expression(None, _) => (),
                 }
             }
             if let Some(condition) = condition {
@@ -457,11 +464,11 @@ fn typecheck_statement(symbols: &mut SymbolMap, statement: &Statement) -> miette
             }
             typecheck_statement(symbols, body)
         }
-        Statement::Compound(block) => {
+        Statement::Compound(block, _) => {
             // let mut symbols = symbols.with_new_scope(false);
             typecheck_block(symbols, block)
         }
-        Statement::If(condition, then, otherwise) => {
+        Statement::If(condition, then, otherwise, _) => {
             typecheck_expr(symbols, condition)?;
             typecheck_statement(symbols, then)?;
             if let Some(otherwise) = otherwise {
@@ -473,6 +480,7 @@ fn typecheck_statement(symbols: &mut SymbolMap, statement: &Statement) -> miette
             condition,
             body,
             label: _,
+            span: _,
         } => {
             // let mut symbols = symbols.with_new_scope(false);
             typecheck_expr(symbols, condition)?;
@@ -484,6 +492,7 @@ fn typecheck_statement(symbols: &mut SymbolMap, statement: &Statement) -> miette
             body,
             condition,
             label: _,
+            span: _,
         } => {
             // let mut symbols = symbols.with_new_scope(false);
             typecheck_expr(symbols, condition)?;
@@ -491,15 +500,15 @@ fn typecheck_statement(symbols: &mut SymbolMap, statement: &Statement) -> miette
 
             Ok(())
         }
-        Statement::Break(_) => Ok(()),
-        Statement::Continue(_) => Ok(()),
+        Statement::Break(_, _) => Ok(()),
+        Statement::Continue(_, _) => Ok(()),
         Statement::Null => Ok(()),
     }
 }
 
 fn typecheck_expr(symbols: &mut SymbolMap, exp: &Exp) -> miette::Result<()> {
     match exp {
-        Exp::FunctionCall(name, args) => {
+        Exp::FunctionCall(name, args, _) => {
             if let Some(TypeInfo::Function(FunctionInfo { params, .. })) =
                 symbols.get(name).map(|x| &x.info)
             {
@@ -529,18 +538,18 @@ fn typecheck_expr(symbols: &mut SymbolMap, exp: &Exp) -> miette::Result<()> {
                 miette::bail!("Function {} not declared", name);
             }
         }
-        Exp::Var(name) => match symbols.get(name).map(|x| &x.info) {
+        Exp::Var(name, _) => match symbols.get(name).map(|x| &x.info) {
             None => {}
             Some(TypeInfo::Function { .. }) => {
                 miette::bail!("{} is a function, not a variable", name)
             }
             Some(TypeInfo::Variable(_)) => (),
         },
-        Exp::BinaryOperation(_, lhs, rhs) => {
+        Exp::BinaryOperation(_, lhs, rhs, _) => {
             typecheck_expr(symbols, lhs)?;
             typecheck_expr(symbols, rhs)?;
         }
-        Exp::Assignment(lhs, rhs) => {
+        Exp::Assignment(lhs, rhs, _) => {
             typecheck_expr(symbols, lhs)?;
             typecheck_expr(symbols, rhs)?;
         }

@@ -1,11 +1,10 @@
 use std::sync::atomic::{AtomicI32, Ordering};
 
 use crate::{
-    parser::{self, BlockItem},
+    lexer::Span,
+    parser::{self, BlockItem, Identifier},
     semantic::{InitialValue, SymbolMap, TypeInfo, VarAttrs},
 };
-
-pub type Identifier = String;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
@@ -32,7 +31,7 @@ impl TryFrom<parser::Program> for Program {
             .declarations
             .into_iter()
             .filter_map(|d| match d {
-                parser::Declaration::Function(function_decl) => Some(function_decl),
+                parser::Declaration::Function(function_decl, _) => Some(function_decl),
                 _ => None,
             })
             .filter(|fd| fd.body.is_some())
@@ -80,15 +79,16 @@ impl TryFrom<parser::FunctionDecl> for Function {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Instruction {
-    Return(Val),
-    Unary(UnaryOperator, Val, Val),
-    Binary(BinaryOperator, Val, Val, Val),
-    Copy(Val, Val),
-    Jump(Identifier),
-    JumpIfZero(Val, Identifier),
-    JumpIfNotZero(Val, Identifier),
-    Label(Identifier),
-    FunCall(Identifier, Vec<Val>, Val),
+    SpanOnly(Span),
+    Return(Val, Option<Span>),
+    Unary(UnaryOperator, Val, Val, Option<Span>),
+    Binary(BinaryOperator, Val, Val, Val, Option<Span>),
+    Copy(Val, Val, Option<Span>),
+    Jump(Identifier, Option<Span>),
+    JumpIfZero(Val, Identifier, Option<Span>),
+    JumpIfNotZero(Val, Identifier, Option<Span>),
+    Label(Identifier, Option<Span>),
+    FunCall(Identifier, Vec<Val>, Val, Option<Span>),
 }
 
 trait IntoInstructions {
@@ -105,11 +105,11 @@ impl IntoInstructions for parser::FunctionDecl {
         let mut instructions = body.into_instructions(context)?;
         // if no return is found
         if let Some(last) = instructions.last() {
-            if !matches!(last, Instruction::Return(_)) {
-                instructions.push(Instruction::Return(Val::Constant(0)));
+            if !matches!(last, Instruction::Return(..)) {
+                instructions.push(Instruction::Return(Val::Constant(0, None), None));
             }
         } else {
-            instructions.push(Instruction::Return(Val::Constant(0)));
+            instructions.push(Instruction::Return(Val::Constant(0, None), None));
         }
 
         Ok(instructions)
@@ -121,8 +121,10 @@ impl IntoInstructions for parser::Block {
         Ok(self
             .into_iter()
             .map(|item| match item {
-                BlockItem::Statement(statement) => statement.clone().into_instructions(context),
-                BlockItem::Declaration(declaration) => {
+                BlockItem::Statement(statement, _span) => {
+                    statement.clone().into_instructions(context)
+                }
+                BlockItem::Declaration(declaration, _span) => {
                     declaration.clone().into_instructions(context)
                 }
             })
@@ -144,8 +146,8 @@ impl IntoInstructions for parser::Exp {
 impl IntoInstructions for parser::ForInit {
     fn into_instructions(self, context: &mut Context) -> miette::Result<Vec<Instruction>> {
         match self {
-            parser::ForInit::Declaration(decl) => decl.into_instructions(context),
-            parser::ForInit::Expression(exp) => {
+            parser::ForInit::Declaration(decl, _span) => decl.into_instructions(context),
+            parser::ForInit::Expression(exp, _span) => {
                 let mut instructions = vec![];
 
                 if let Some(exp) = exp {
@@ -166,75 +168,83 @@ impl IntoInstructions for parser::VarDecl {
             return Ok(vec![]);
         };
 
+        // static variables are initialized only once
+        if self.storage_class == Some(parser::StorageClass::Static) {
+            return Ok(vec![]);
+        }
+
         let mut instructions = vec![];
-        emit_assignment(self.name, init, &mut instructions, context);
+        emit_assignment(self.name, init, &mut instructions, context, self.span);
         Ok(instructions)
     }
 }
 
-fn break_label_for(label: String) -> String {
-    format!("break_{label}")
+fn break_label_for(label: String) -> Identifier {
+    Identifier::new(format!("break_{label}"))
 }
 
-fn continue_label_for(label: String) -> String {
-    format!("continue_{label}")
+fn continue_label_for(label: String) -> Identifier {
+    Identifier::new(format!("continue_{label}"))
 }
 
 impl IntoInstructions for parser::Statement {
     fn into_instructions(self, context: &mut Context) -> miette::Result<Vec<Instruction>> {
+        let mut instructions = vec![Instruction::SpanOnly(self.span())];
+
         match self {
-            parser::Statement::Return(exp) => {
-                let mut instructions = vec![];
+            parser::Statement::Return(exp, span) => {
                 let val = emit_ir(exp, &mut instructions, context);
-                instructions.push(Instruction::Return(val));
-                Ok(instructions)
+                instructions.push(Instruction::Return(val, Some(span)));
             }
-            parser::Statement::Expression(exp) => {
-                let mut instructions = vec![];
+            parser::Statement::Expression(exp, _span) => {
+                // instructions.push(Instruction::SpanOnly(span));
                 emit_ir(exp, &mut instructions, context);
-                Ok(instructions)
             }
-            parser::Statement::Null => Ok(vec![]),
-            parser::Statement::If(cond, then, else_) => {
-                let mut instructions = vec![];
+            parser::Statement::Null => {}
+            parser::Statement::If(cond, then, else_, _span) => {
+                // instructions.push(Instruction::SpanOnly(span));
                 let cond = emit_ir(cond, &mut instructions, context);
                 let end_label = context.next_label("end");
                 let else_label = context.next_label("else");
 
-                instructions.push(Instruction::JumpIfZero(cond.clone(), else_label.clone()));
+                instructions.push(Instruction::JumpIfZero(
+                    cond.clone(),
+                    else_label.clone(),
+                    None,
+                ));
                 let then_instructions = then.into_instructions(context)?;
                 instructions.extend(then_instructions);
-                instructions.push(Instruction::Jump(end_label.clone()));
-                instructions.push(Instruction::Label(else_label.clone()));
+                instructions.push(Instruction::Jump(end_label.clone(), None));
+                instructions.push(Instruction::Label(else_label.clone(), None));
                 if let Some(else_) = else_ {
                     let else_instructions = else_.into_instructions(context)?;
                     instructions.extend(else_instructions);
                 }
-                instructions.push(Instruction::Label(end_label.clone()));
-                Ok(instructions)
+                instructions.push(Instruction::Label(end_label.clone(), None));
             }
-            parser::Statement::Compound(block) => block.into_instructions(context),
-            parser::Statement::Break(label) => {
+            parser::Statement::Compound(block, _span) => {
+                instructions.extend(block.into_instructions(context)?)
+            }
+            parser::Statement::Break(label, span) => {
                 let Some(label) = label else {
                     miette::bail!("Break statement outside loop");
                 };
 
-                Ok(vec![Instruction::Jump(break_label_for(label))])
+                instructions.push(Instruction::Jump(break_label_for(label), Some(span)));
             }
-            parser::Statement::Continue(label) => {
+            parser::Statement::Continue(label, span) => {
                 let Some(label) = label else {
                     miette::bail!("Continue statement outside loop");
                 };
 
-                Ok(vec![Instruction::Jump(continue_label_for(label))])
+                instructions.push(Instruction::Jump(continue_label_for(label), Some(span)))
             }
             parser::Statement::While {
                 condition,
                 body,
                 label,
+                span: _,
             } => {
-                let mut instructions = vec![];
-
                 let Some(label) = label else {
                     miette::bail!("Unexpected error: While label is missing");
                 };
@@ -242,55 +252,57 @@ impl IntoInstructions for parser::Statement {
                 let break_label = break_label_for(label.clone());
 
                 // start label
-                instructions.push(Instruction::Label(continue_label.clone()));
+                instructions.push(Instruction::Label(continue_label.clone(), None));
 
                 // condition
                 let cond = emit_ir(condition, &mut instructions, context);
-                instructions.push(Instruction::JumpIfZero(cond.clone(), break_label.clone()));
+                instructions.push(Instruction::JumpIfZero(
+                    cond.clone(),
+                    break_label.clone(),
+                    None,
+                ));
 
                 // body instructions
                 let body_instructions = body.into_instructions(context)?;
                 instructions.extend(body_instructions);
 
                 // jump back to continue label
-                instructions.push(Instruction::Jump(continue_label));
+                instructions.push(Instruction::Jump(continue_label, None));
 
                 // break label
-                instructions.push(Instruction::Label(break_label));
-
-                Ok(instructions)
+                instructions.push(Instruction::Label(break_label, None));
             }
             parser::Statement::DoWhile {
                 body,
                 condition,
                 label,
+                span: _,
             } => {
-                let mut instructions = vec![];
-
                 let Some(start_label) = label else {
                     miette::bail!("Unexpected error: DoWhile label is missing");
                 };
                 let continue_label = continue_label_for(start_label.clone());
                 let break_label = break_label_for(start_label.clone());
+                let start_label = Identifier::new(start_label.clone());
+
+                // instructions.push(Instruction::SpanOnly(span));
 
                 // start label
-                instructions.push(Instruction::Label(start_label.clone()));
+                instructions.push(Instruction::Label(start_label.clone(), None));
 
                 // body instructions
                 let body_instructions = body.into_instructions(context)?;
                 instructions.extend(body_instructions);
 
                 // continue label
-                instructions.push(Instruction::Label(continue_label));
+                instructions.push(Instruction::Label(continue_label, None));
 
                 // condition
                 let cond = emit_ir(condition, &mut instructions, context);
-                instructions.push(Instruction::JumpIfNotZero(cond.clone(), start_label));
+                instructions.push(Instruction::JumpIfNotZero(cond.clone(), start_label, None));
 
                 // break label
-                instructions.push(Instruction::Label(break_label));
-
-                Ok(instructions)
+                instructions.push(Instruction::Label(break_label, None));
             }
             parser::Statement::For {
                 init,
@@ -298,32 +310,39 @@ impl IntoInstructions for parser::Statement {
                 post,
                 body,
                 label,
+                span: _,
             } => {
-                let mut instructions = vec![];
-
                 let Some(start_label) = label else {
                     miette::bail!("Unexpected error: For label is missing");
                 };
                 let break_label = break_label_for(start_label.clone());
                 let continue_label = continue_label_for(start_label.clone());
+                let start_label = Identifier::new(start_label.clone());
+
+                // instructions.push(Instruction::SpanOnly(span));
 
                 if let Some(init) = init {
                     instructions.extend(init.into_instructions(context)?);
                 }
 
                 // start label
-                instructions.push(Instruction::Label(start_label.clone()));
+                instructions.push(Instruction::Label(start_label.clone(), None));
 
                 // condition
                 if let Some(condition) = condition {
                     let cond = emit_ir(condition, &mut instructions, context);
-                    instructions.push(Instruction::JumpIfZero(cond.clone(), break_label.clone()));
+                    instructions.push(Instruction::JumpIfZero(
+                        cond.clone(),
+                        break_label.clone(),
+                        None,
+                    ));
                 } else {
                     // if condition is absent, C standard says this expression is "replaced by a
                     // nonzero constant" (section 6.8.5.3, paragraph 2)
                     instructions.push(Instruction::JumpIfZero(
-                        Val::Constant(1),
+                        Val::Constant(1, None),
                         break_label.clone(),
+                        None,
                     ));
                 }
 
@@ -331,7 +350,7 @@ impl IntoInstructions for parser::Statement {
                 instructions.extend(body.into_instructions(context)?);
 
                 // continue label
-                instructions.push(Instruction::Label(continue_label.clone()));
+                instructions.push(Instruction::Label(continue_label.clone(), None));
 
                 // post
                 if let Some(post) = post {
@@ -339,40 +358,55 @@ impl IntoInstructions for parser::Statement {
                 }
 
                 // jumps to start
-                instructions.push(Instruction::Jump(start_label));
+                instructions.push(Instruction::Jump(start_label, None));
 
                 // break label
-                instructions.push(Instruction::Label(break_label));
-
-                Ok(instructions)
+                instructions.push(Instruction::Label(break_label, None));
             }
-        }
+        };
+
+        Ok(instructions)
     }
 }
 
 impl IntoInstructions for parser::Declaration {
     fn into_instructions(self, context: &mut Context) -> miette::Result<Vec<Instruction>> {
         match self {
-            parser::Declaration::Var(decl) => decl.into_instructions(context),
-            parser::Declaration::Function(decl) => decl.into_instructions(context),
+            parser::Declaration::Var(decl, _span) => decl.into_instructions(context),
+            parser::Declaration::Function(decl, _span) => decl.into_instructions(context),
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Val {
-    Constant(i32),
-    Var(Identifier),
+    Constant(i32, Option<Span>),
+    Var(Identifier, Option<Span>),
+}
+
+impl Val {
+    pub fn span(&self) -> Option<Span> {
+        match self {
+            Val::Constant(_, span) => *span,
+            Val::Var(_, span) => *span,
+        }
+    }
 }
 
 pub fn emit_assignment(
-    name: String,
+    name: Identifier,
     exp: parser::Exp,
     instructions: &mut Vec<Instruction>,
     context: &mut Context,
+    span: Span,
 ) -> Val {
     let val = emit_ir(exp, instructions, context);
-    instructions.push(Instruction::Copy(val.clone(), Val::Var(name)));
+    instructions.push(Instruction::SpanOnly(span));
+    instructions.push(Instruction::Copy(
+        val.clone(),
+        Val::Var(name.clone(), name.span()),
+        val.clone().span(),
+    ));
     val
 }
 
@@ -382,24 +416,31 @@ pub fn emit_ir(
     context: &mut Context,
 ) -> Val {
     match exp {
-        parser::Exp::Var(name) => Val::Var(name),
-        parser::Exp::Assignment(exp, rhs) => match exp.as_ref() {
-            parser::Exp::Var(name) => emit_assignment(name.clone(), *rhs, instructions, context),
-            parser::Exp::Constant(_) => todo!(),
-            parser::Exp::Assignment(_, _) => todo!(),
-            parser::Exp::Unary(_, _) => todo!(),
-            parser::Exp::BinaryOperation(_, _, _) => todo!(),
-            parser::Exp::Conditional(_, _, _) => todo!(),
-            parser::Exp::FunctionCall(_, _) => todo!(),
+        parser::Exp::Var(name, span) => Val::Var(name, Some(span)),
+        parser::Exp::Assignment(exp, rhs, span) => match exp.as_ref() {
+            parser::Exp::Var(name, _span) => {
+                emit_assignment(name.clone(), *rhs, instructions, context, span)
+            }
+            parser::Exp::Constant(_, _) => todo!(),
+            parser::Exp::Assignment(_, _, _) => todo!(),
+            parser::Exp::Unary(_, _, _) => todo!(),
+            parser::Exp::BinaryOperation(_, _, _, _) => todo!(),
+            parser::Exp::Conditional(_, _, _, _) => todo!(),
+            parser::Exp::FunctionCall(_, _, _) => todo!(),
         },
-        parser::Exp::Constant(value) => Val::Constant(value),
-        parser::Exp::Unary(operator, exp) => {
+        parser::Exp::Constant(value, span) => Val::Constant(value, Some(span)),
+        parser::Exp::Unary(operator, exp, span) => {
             let src = emit_ir(*exp, instructions, context);
-            let dst = Val::Var(context.next_var());
-            instructions.push(Instruction::Unary(operator.into(), src, dst.clone()));
+            let dst = Val::Var(context.next_var(), None);
+            instructions.push(Instruction::Unary(
+                operator.into(),
+                src,
+                dst.clone(),
+                Some(span),
+            ));
             dst
         }
-        parser::Exp::BinaryOperation(oper, v1, v2) => match oper {
+        parser::Exp::BinaryOperation(oper, v1, v2, _span) => match oper {
             parser::BinaryOperator::Or => {
                 let short_circuit_label = context.next_label("short_circuit");
                 let end_label = context.next_label("end");
@@ -412,6 +453,7 @@ pub fn emit_ir(
                 instructions.push(Instruction::JumpIfNotZero(
                     val1.clone(),
                     short_circuit_label.clone(),
+                    None,
                 ));
 
                 // Evaluate second operand
@@ -421,27 +463,30 @@ pub fn emit_ir(
                 instructions.push(Instruction::JumpIfNotZero(
                     val2.clone(),
                     short_circuit_label.clone(),
+                    None,
                 ));
 
                 // Set result based on second operand
                 instructions.push(Instruction::Copy(
-                    Val::Constant(0),
-                    Val::Var(result.clone()),
+                    Val::Constant(0, None),
+                    Val::Var(result.clone(), None),
+                    None,
                 ));
                 // And jump to end
-                instructions.push(Instruction::Jump(end_label.clone()));
+                instructions.push(Instruction::Jump(end_label.clone(), None));
 
                 // False label
-                instructions.push(Instruction::Label(short_circuit_label.clone()));
+                instructions.push(Instruction::Label(short_circuit_label.clone(), None));
                 instructions.push(Instruction::Copy(
-                    Val::Constant(1),
-                    Val::Var(result.clone()),
+                    Val::Constant(1, None),
+                    Val::Var(result.clone(), None),
+                    None,
                 ));
 
                 // End label
-                instructions.push(Instruction::Label(end_label.clone()));
+                instructions.push(Instruction::Label(end_label.clone(), None));
 
-                Val::Var(result)
+                Val::Var(result, None)
             }
             parser::BinaryOperator::And => {
                 let short_circuit_label = context.next_label("short_circuit");
@@ -455,6 +500,7 @@ pub fn emit_ir(
                 instructions.push(Instruction::JumpIfZero(
                     val1.clone(),
                     short_circuit_label.clone(),
+                    None,
                 ));
 
                 // Evaluate second operand
@@ -464,37 +510,46 @@ pub fn emit_ir(
                 instructions.push(Instruction::JumpIfZero(
                     val2.clone(),
                     short_circuit_label.clone(),
+                    None,
                 ));
 
                 // Set result based on second operand
                 instructions.push(Instruction::Copy(
-                    Val::Constant(1),
-                    Val::Var(result.clone()),
+                    Val::Constant(1, None),
+                    Val::Var(result.clone(), None),
+                    None,
                 ));
                 // And jump to end
-                instructions.push(Instruction::Jump(end_label.clone()));
+                instructions.push(Instruction::Jump(end_label.clone(), None));
 
                 // False label
-                instructions.push(Instruction::Label(short_circuit_label.clone()));
+                instructions.push(Instruction::Label(short_circuit_label.clone(), None));
                 instructions.push(Instruction::Copy(
-                    Val::Constant(0),
-                    Val::Var(result.clone()),
+                    Val::Constant(0, None),
+                    Val::Var(result.clone(), None),
+                    None,
                 ));
 
                 // End label
-                instructions.push(Instruction::Label(end_label.clone()));
+                instructions.push(Instruction::Label(end_label.clone(), None));
 
-                Val::Var(result)
+                Val::Var(result, None)
             }
             _ => {
                 let val1 = emit_ir(*v1, instructions, context);
                 let val2 = emit_ir(*v2, instructions, context);
-                let dst = Val::Var(context.next_var());
-                instructions.push(Instruction::Binary(oper.into(), val1, val2, dst.clone()));
+                let dst = Val::Var(context.next_var(), None);
+                instructions.push(Instruction::Binary(
+                    oper.into(),
+                    val1,
+                    val2,
+                    dst.clone(),
+                    None,
+                ));
                 dst
             }
         },
-        parser::Exp::Conditional(cond, e1, e2) => {
+        parser::Exp::Conditional(cond, e1, e2, _span) => {
             // Emit instructions for condition
             let c = emit_ir(*cond, instructions, context);
 
@@ -506,33 +561,33 @@ pub fn emit_ir(
             let result = context.next_var();
 
             // Jump to e2 if condition is zero
-            instructions.push(Instruction::JumpIfZero(c, e2_label.clone()));
+            instructions.push(Instruction::JumpIfZero(c, e2_label.clone(), None));
 
             // Emit instructions for e1
             let v1 = emit_ir(*e1, instructions, context);
 
             // Assign result of e1 to result
-            instructions.push(Instruction::Copy(v1, Val::Var(result.clone())));
+            instructions.push(Instruction::Copy(v1, Val::Var(result.clone(), None), None));
 
             // Jump to end
-            instructions.push(Instruction::Jump(end_label.clone()));
+            instructions.push(Instruction::Jump(end_label.clone(), None));
 
             // Label for e2
-            instructions.push(Instruction::Label(e2_label));
+            instructions.push(Instruction::Label(e2_label, None));
 
             // Emit instructions for e2
             let v2 = emit_ir(*e2, instructions, context);
 
             // Assign result of e2 to result
-            instructions.push(Instruction::Copy(v2, Val::Var(result.clone())));
+            instructions.push(Instruction::Copy(v2, Val::Var(result.clone(), None), None));
 
             // End label
-            instructions.push(Instruction::Label(end_label));
+            instructions.push(Instruction::Label(end_label, None));
 
             // Return result
-            Val::Var(result)
+            Val::Var(result, None)
         }
-        parser::Exp::FunctionCall(name, params) => {
+        parser::Exp::FunctionCall(name, params, _span) => {
             let params = params
                 .iter()
                 .map(|p| emit_ir(p.clone(), instructions, context))
@@ -540,9 +595,14 @@ pub fn emit_ir(
 
             let result = context.next_var();
 
-            instructions.push(Instruction::FunCall(name, params, Val::Var(result.clone())));
+            instructions.push(Instruction::FunCall(
+                name,
+                params,
+                Val::Var(result.clone(), None),
+                None,
+            ));
 
-            Val::Var(result)
+            Val::Var(result, None)
         }
     }
 }
@@ -638,14 +698,14 @@ fn convert_symbols_to_tacky(symbols: &SymbolMap) -> Vec<TopLevel> {
                         tacky_defs.push(TopLevel::StaticVariable(StaticVar {
                             name: name.clone(),
                             global: *global,
-                            init: Val::Constant(*i),
+                            init: Val::Constant(*i, None),
                         }));
                     }
                     InitialValue::Tentative => {
                         tacky_defs.push(TopLevel::StaticVariable(StaticVar {
                             name: name.clone(),
                             global: *global,
-                            init: Val::Constant(0),
+                            init: Val::Constant(0, None),
                         }));
                     }
                     _ => {}
@@ -670,12 +730,12 @@ impl Context {
 
     pub fn next_var(&self) -> Identifier {
         let id = self.next_temp.fetch_add(1, Ordering::SeqCst);
-        format!("tmp.{}", id)
+        Identifier::new(format!("tmp.{}", id))
     }
 
     pub fn next_label(&self, descr: &str) -> Identifier {
         let id = self.next_temp.fetch_add(1, Ordering::SeqCst);
-        format!("{descr}.label.{}", id)
+        Identifier::new(format!("{descr}.label.{}", id))
     }
 }
 

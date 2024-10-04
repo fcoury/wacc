@@ -4,9 +4,12 @@ use loop_labeling::label_loops;
 use type_check::typecheck_program;
 pub use type_check::{InitialValue, SymbolMap, TypeInfo, VarAttrs};
 
-use crate::parser::{
-    Block, BlockItem, Declaration, Exp, ForInit, FunctionDecl, Program, Statement, StorageClass,
-    Type, VarDecl,
+use crate::{
+    lexer::Span,
+    parser::{
+        Block, BlockItem, Declaration, Exp, ForInit, FunctionDecl, Identifier, Program, Statement,
+        StorageClass, Type, VarDecl,
+    },
 };
 
 mod loop_labeling;
@@ -36,11 +39,13 @@ impl Analysis {
 
         for declaration in program.declarations {
             declarations.push(match declaration {
-                Declaration::Function(fun) => Declaration::Function(
+                Declaration::Function(fun, span) => Declaration::Function(
                     self.resolve_function_declaration(&mut context, &mut identifier_map, &fun)?,
+                    span,
                 ),
-                Declaration::Var(var) => Declaration::Var(
+                Declaration::Var(var, span) => Declaration::Var(
                     self.resolve_file_scope_variable_declaration(&var, &mut identifier_map),
+                    span,
                 ),
             })
         }
@@ -92,16 +97,26 @@ impl Analysis {
             );
             Ok(decl.clone())
         } else {
+            let init = match &decl.init {
+                Some(exp) => Some(resolve_exp(identifier_map, exp)?),
+                None => None,
+            };
             let unique_name = context.next_var(&decl.name);
             identifier_map.insert(
                 decl.name.clone(),
                 IdentifierInfo {
-                    name: unique_name,
+                    name: unique_name.clone(),
                     from_current_scope: true,
                     has_linkage: false,
                 },
             );
-            Ok(decl.clone())
+            Ok(VarDecl {
+                name: unique_name,
+                typ: decl.typ.clone(),
+                init,
+                storage_class: decl.storage_class.clone(),
+                span: decl.span,
+            })
         }
     }
 
@@ -114,28 +129,41 @@ impl Analysis {
         let mut items = Vec::with_capacity(block.len());
         for block_item in block.iter() {
             match block_item {
-                BlockItem::Declaration(Declaration::Var(declaration)) => {
-                    items.push(BlockItem::Declaration(Declaration::Var(
-                        self.resolve_local_variable_declaration(
-                            context,
-                            identifier_map,
-                            declaration,
-                        )?,
-                    )))
-                }
-                BlockItem::Declaration(Declaration::Function(declaration)) => {
-                    items.push(BlockItem::Declaration(Declaration::Function(
-                        self.resolve_function_declaration(context, identifier_map, declaration)?,
-                    )))
-                }
-                BlockItem::Statement(statement) => {
+                BlockItem::Declaration(Declaration::Var(declaration, var_span), span) => items
+                    .push(BlockItem::Declaration(
+                        Declaration::Var(
+                            self.resolve_local_variable_declaration(
+                                context,
+                                identifier_map,
+                                declaration,
+                            )?,
+                            *var_span,
+                        ),
+                        *span,
+                    )),
+                BlockItem::Declaration(Declaration::Function(declaration, fun_span), span) => items
+                    .push(BlockItem::Declaration(
+                        Declaration::Function(
+                            self.resolve_function_declaration(
+                                context,
+                                identifier_map,
+                                declaration,
+                            )?,
+                            *fun_span,
+                        ),
+                        *span,
+                    )),
+                BlockItem::Statement(statement, span) => {
                     let statement = self.resolve_statement(context, identifier_map, statement)?;
-                    items.push(BlockItem::Statement(statement))
+                    items.push(BlockItem::Statement(statement, *span))
                 }
             }
         }
 
-        Ok(Block { items })
+        Ok(Block {
+            items,
+            span: block.span,
+        })
     }
 
     fn resolve_statement(
@@ -145,12 +173,14 @@ impl Analysis {
         statement: &Statement,
     ) -> miette::Result<Statement> {
         let statement = match &statement {
-            Statement::Return(expr) => Statement::Return(resolve_exp(identifier_map, expr)?),
-            Statement::Expression(expr) => {
-                Statement::Expression(resolve_exp(identifier_map, expr)?)
+            Statement::Return(expr, span) => {
+                Statement::Return(resolve_exp(identifier_map, expr)?, *span)
+            }
+            Statement::Expression(expr, span) => {
+                Statement::Expression(resolve_exp(identifier_map, expr)?, *span)
             }
             Statement::Null => Statement::Null,
-            Statement::If(cond, then, else_) => {
+            Statement::If(cond, then, else_, span) => {
                 let cond = resolve_exp(identifier_map, cond)?;
                 let then = self.resolve_statement(context, identifier_map, then)?;
                 let else_ = match else_ {
@@ -161,18 +191,22 @@ impl Analysis {
                     )?)),
                     None => None,
                 };
-                Statement::If(cond, Box::new(then), else_)
+                Statement::If(cond, Box::new(then), else_, *span)
             }
-            Statement::Compound(block) => {
+            Statement::Compound(block, span) => {
                 let mut identifier_map = identifier_map.with_new_scope();
-                Statement::Compound(self.resolve_block(context, &mut identifier_map, block)?)
+                Statement::Compound(
+                    self.resolve_block(context, &mut identifier_map, block)?,
+                    *span,
+                )
             }
-            Statement::Break(label) => Statement::Break(label.clone()),
-            Statement::Continue(label) => Statement::Continue(label.clone()),
+            Statement::Break(label, span) => Statement::Break(label.clone(), *span),
+            Statement::Continue(label, span) => Statement::Continue(label.clone(), *span),
             Statement::While {
                 condition,
                 body,
                 label,
+                span,
             } => {
                 let condition = resolve_exp(identifier_map, condition)?;
                 let body = self.resolve_statement(context, identifier_map, body)?;
@@ -180,12 +214,14 @@ impl Analysis {
                     condition,
                     body: Box::new(body),
                     label: label.clone(),
+                    span: *span,
                 }
             }
             Statement::DoWhile {
                 body,
                 condition,
                 label,
+                span,
             } => {
                 let body = self.resolve_statement(context, identifier_map, body)?;
                 let condition = resolve_exp(identifier_map, condition)?;
@@ -193,6 +229,7 @@ impl Analysis {
                     body: Box::new(body),
                     condition,
                     label: label.clone(),
+                    span: *span,
                 }
             }
             Statement::For {
@@ -201,6 +238,7 @@ impl Analysis {
                 post,
                 body,
                 label,
+                span,
             } => {
                 let mut identifier_map = identifier_map.with_new_scope();
                 let init = match init {
@@ -224,6 +262,7 @@ impl Analysis {
                     post,
                     body: Box::new(body),
                     label: label.clone(),
+                    span: *span,
                 }
             }
         };
@@ -281,11 +320,13 @@ impl Analysis {
         declaration: &Declaration,
     ) -> miette::Result<Declaration> {
         Ok(match declaration {
-            Declaration::Var(decl) => {
-                Declaration::Var(resolve_var_declaration(context, identifier_map, decl)?)
-            }
-            Declaration::Function(decl) => Declaration::Function(
+            Declaration::Var(decl, span) => Declaration::Var(
+                resolve_var_declaration(context, identifier_map, decl)?,
+                *span,
+            ),
+            Declaration::Function(decl, span) => Declaration::Function(
                 self.resolve_function_declaration(context, identifier_map, decl)?,
+                *span,
             ),
         })
     }
@@ -297,32 +338,36 @@ impl Analysis {
         init: &crate::parser::ForInit,
     ) -> miette::Result<crate::parser::ForInit> {
         match init {
-            ForInit::Declaration(declaration) => {
-                let declaration = Declaration::Var(VarDecl {
-                    name: declaration.name.clone(),
-                    typ: Type::Int,
-                    init: match &declaration.init {
-                        Some(exp) => Some(resolve_exp(identifier_map, exp)?),
-                        None => None,
+            ForInit::Declaration(declaration, span) => {
+                let declaration = Declaration::Var(
+                    VarDecl {
+                        name: declaration.name.clone(),
+                        typ: Type::Int,
+                        init: match &declaration.init {
+                            Some(exp) => Some(resolve_exp(identifier_map, exp)?),
+                            None => None,
+                        },
+                        storage_class: declaration.storage_class.clone(),
+                        span: *span,
                     },
-                    storage_class: declaration.storage_class.clone(),
-                });
+                    *span,
+                );
                 let declaration =
                     self.resolve_declaration(context, identifier_map, &declaration)?;
 
                 match declaration {
-                    Declaration::Var(var) => Ok(ForInit::Declaration(var)),
-                    Declaration::Function(fun) => {
+                    Declaration::Var(var, span) => Ok(ForInit::Declaration(var, span)),
+                    Declaration::Function(fun, _span) => {
                         miette::bail!("Resolved function declaration for for init {}", fun.name)
                     }
                 }
             }
-            ForInit::Expression(exp) => {
+            ForInit::Expression(exp, span) => {
                 let Some(exp) = exp else {
-                    return Ok(ForInit::Expression(None));
+                    return Ok(ForInit::Expression(None, *span));
                 };
                 let exp = resolve_exp(identifier_map, exp)?;
-                Ok(ForInit::Expression(Some(exp)))
+                Ok(ForInit::Expression(Some(exp), *span))
             }
         }
     }
@@ -330,7 +375,7 @@ impl Analysis {
 
 #[derive(Debug, Clone)]
 pub struct IdentifierMap {
-    inner: HashMap<String, IdentifierInfo>,
+    inner: HashMap<Identifier, IdentifierInfo>,
 }
 
 impl IdentifierMap {
@@ -356,11 +401,11 @@ impl IdentifierMap {
         Self { inner }
     }
 
-    pub fn insert(&mut self, name: String, info: IdentifierInfo) {
+    pub fn insert(&mut self, name: Identifier, info: IdentifierInfo) {
         self.inner.insert(name, info);
     }
 
-    pub fn overrides(&self, name: &str) -> bool {
+    pub fn overrides(&self, name: &Identifier) -> bool {
         if let Some(info) = self.inner.get(name) {
             info.from_current_scope
         } else {
@@ -368,21 +413,21 @@ impl IdentifierMap {
         }
     }
 
-    pub fn get(&self, name: &str) -> Option<&IdentifierInfo> {
+    pub fn get(&self, name: &Identifier) -> Option<&IdentifierInfo> {
         self.inner.get(name)
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct IdentifierInfo {
-    name: String,
+    name: Identifier,
     from_current_scope: bool,
     has_linkage: bool,
 }
 
 fn resolve_param(
     context: &mut Context,
-    function_name: &str,
+    function_name: &Identifier,
     identifier_map: &mut IdentifierMap,
     param: &VarDecl,
 ) -> miette::Result<VarDecl> {
@@ -409,6 +454,7 @@ fn resolve_param(
         typ: Type::Int,
         init: None,
         storage_class: param.storage_class.clone(),
+        span: Span::empty(),
     })
 }
 
@@ -441,41 +487,47 @@ fn resolve_var_declaration(
         typ: Type::Int,
         init,
         storage_class: declaration.storage_class.clone(),
+        span: declaration.span,
     })
 }
 
 fn resolve_exp(identifier_map: &IdentifierMap, exp: &Exp) -> miette::Result<Exp> {
     match exp {
-        Exp::Assignment(left, right) => {
+        Exp::Assignment(left, right, span) => {
             let left = resolve_exp(identifier_map, left.as_ref())?;
             let right = resolve_exp(identifier_map, right.as_ref())?;
-            let Exp::Var(_) = left else {
+            let Exp::Var(_, _) = left else {
                 miette::bail!(
                     "Invalid assignment target. Expected variable, found {:?}",
                     left
                 );
             };
-            Ok(Exp::Assignment(Box::new(left), Box::new(right)))
+            Ok(Exp::Assignment(Box::new(left), Box::new(right), *span))
         }
-        Exp::Var(name) => {
+        Exp::Var(name, span) => {
             if let Some(info) = identifier_map.get(name) {
-                Ok(Exp::Var(info.name.clone()))
+                Ok(Exp::Var(info.name.clone(), *span))
             } else {
                 miette::bail!("Variable {} not declared", name);
             }
         }
         // Exp::Factor(factor) => Ok(Exp::Factor(self.resolve_factor(context, factor)?)),
-        Exp::Constant(_) => Ok(exp.clone()),
-        Exp::Unary(op, exp) => {
+        Exp::Constant(_, _) => Ok(exp.clone()),
+        Exp::Unary(op, exp, span) => {
             let factor = resolve_exp(identifier_map, exp.as_ref())?;
-            Ok(Exp::Unary(op.clone(), Box::new(factor)))
+            Ok(Exp::Unary(op.clone(), Box::new(factor), *span))
         }
-        Exp::BinaryOperation(op, left, right) => {
+        Exp::BinaryOperation(op, left, right, span) => {
             let left = resolve_exp(identifier_map, left.as_ref())?;
             let right = resolve_exp(identifier_map, right.as_ref())?;
-            Ok(Exp::BinaryOperation(*op, Box::new(left), Box::new(right)))
+            Ok(Exp::BinaryOperation(
+                *op,
+                Box::new(left),
+                Box::new(right),
+                *span,
+            ))
         }
-        Exp::Conditional(cond, then, else_) => {
+        Exp::Conditional(cond, then, else_, span) => {
             let cond = resolve_exp(identifier_map, cond.as_ref())?;
             let then = resolve_exp(identifier_map, then.as_ref())?;
             let else_ = resolve_exp(identifier_map, else_.as_ref())?;
@@ -484,16 +536,21 @@ fn resolve_exp(identifier_map: &IdentifierMap, exp: &Exp) -> miette::Result<Exp>
                 Box::new(cond),
                 Box::new(then),
                 Box::new(else_),
+                *span,
             ))
         }
-        Exp::FunctionCall(fun_name, args) => {
+        Exp::FunctionCall(fun_name, args, span) => {
             // page 175, listing 9-18
             if let Some(identifier_info) = identifier_map.get(fun_name) {
                 let new_args = args
                     .iter()
                     .map(|arg| resolve_exp(identifier_map, arg))
                     .collect::<miette::Result<Vec<_>>>()?;
-                Ok(Exp::FunctionCall(identifier_info.name.clone(), new_args))
+                Ok(Exp::FunctionCall(
+                    identifier_info.name.clone(),
+                    new_args,
+                    *span,
+                ))
             } else {
                 // TODO: add rastreability to items in the program
                 miette::bail!("Undeclared function {fun_name}");
@@ -513,15 +570,19 @@ impl Context {
         }
     }
 
-    fn next_var(&mut self, prefix: &str) -> String {
+    fn next_var(&mut self, prefix: &Identifier) -> Identifier {
+        self.next_var_from(&prefix.to_string())
+    }
+
+    fn next_var_from(&mut self, prefix: &str) -> Identifier {
         let counter = self.counters.entry(prefix.to_string()).or_insert(0);
         let var_name = format!("{}_{}", prefix, counter);
         *counter += 1;
-        var_name
+        Identifier::new(var_name)
     }
 
-    pub fn next_label(&mut self, descr: &str) -> String {
-        self.next_var(descr) // &format!("label_{descr}"))
+    fn next_label(&mut self, arg: &str) -> Identifier {
+        self.next_var_from(arg)
     }
 }
 

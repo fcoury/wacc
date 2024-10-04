@@ -1,4 +1,5 @@
 mod assembler;
+mod common;
 mod ir;
 mod lexer;
 mod parser;
@@ -7,6 +8,7 @@ mod utils;
 
 use assembler::Assembler;
 use clap::Parser;
+use common::to_code;
 use lexer::Lexer;
 use miette::{Context, IntoDiagnostic};
 use std::{
@@ -133,9 +135,9 @@ fn compile(input_file: &Path, args: &Args) -> miette::Result<()> {
         return Ok(());
     }
 
-    let assembler = Assembler::new();
+    let assembler = Assembler::new(&input);
     let assembly = assembler
-        .assemble(tacky, symbols)
+        .assemble(tacky, symbols.clone())
         .context("Failed to assemble file")?;
     println!("\nAssembly:");
     for line in assembly.iter() {
@@ -146,11 +148,11 @@ fn compile(input_file: &Path, args: &Args) -> miette::Result<()> {
         return Ok(());
     }
 
-    let code = assembly.to_string();
+    let code = to_code(&assembly, &input, symbols);
     println!("Code:\n{}", code);
 
     let assembly_file = input_file.with_extension("s");
-    std::fs::write(&assembly_file, code)
+    std::fs::write(&assembly_file, format!("{code}"))
         .into_diagnostic()
         .wrap_err("Failed to write assembly file")?;
     build(&assembly_file, args.c)?;

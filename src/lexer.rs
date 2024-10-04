@@ -1,18 +1,55 @@
-use miette::LabeledSpan;
+use miette::{LabeledSpan, SourceOffset, SourceSpan};
 use regex::Regex;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Token<'a> {
     pub kind: TokenKind,
     pub origin: &'a str,
-    pub offset: usize,
+    pub span: Span,
 }
 
 impl Token<'_> {
     pub fn len(&self) -> usize {
         self.origin.len()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct Span {
+    pub start: usize,
+    pub end: usize,
+}
+
+impl Span {
+    pub fn new(start: usize, end: usize) -> Span {
+        Span { start, end }
+    }
+
+    pub fn empty() -> Span {
+        Span { start: 0, end: 0 }
+    }
+
+    pub fn join(&self, other: &Span) -> Span {
+        Span {
+            start: self.start,
+            end: other.end,
+        }
+    }
+
+    pub fn value(&self, source: &str) -> String {
+        source[self.start..self.end].to_string()
+    }
+
+    pub fn len(&self) -> usize {
+        self.end - self.start
+    }
+}
+
+impl From<&Token<'_>> for SourceSpan {
+    fn from(token: &Token<'_>) -> SourceSpan {
+        SourceSpan::new(SourceOffset::from(token.span.start), token.span.len())
     }
 }
 
@@ -167,7 +204,7 @@ impl<'a> Lexer<'a> {
                         tokens.push(Token {
                             kind,
                             origin: token_str,
-                            offset,
+                            span: Span::new(offset, self.pos),
                         });
                         matched = true;
                         break;
@@ -189,7 +226,7 @@ impl<'a> Lexer<'a> {
         tokens.push(Token {
             kind: TokenKind::Eof,
             origin: "",
-            offset: self.pos,
+            span: Span::new(self.pos, self.pos),
         });
 
         Ok(tokens)

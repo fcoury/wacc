@@ -5,7 +5,10 @@ use std::{
 };
 
 use crate::{
+    common::ToCode,
     ir,
+    lexer::Span,
+    parser::Identifier,
     semantic::{InitialValue, SymbolMap, TypeInfo, VarAttrs},
     utils::safe_split_at,
 };
@@ -25,10 +28,10 @@ impl From<ir::TopLevel> for TopLevel {
     }
 }
 
-impl DisplayWithSymbolMap for TopLevel {
-    fn fmt_with_symbols(&self, symbols: &SymbolMap, f: &mut Formatter) -> fmt::Result {
+impl ToCode for TopLevel {
+    fn to_code(&self, source: impl ToString, symbols: SymbolMap, f: &mut Formatter) -> fmt::Result {
         match self {
-            TopLevel::Function(function) => function.fmt_with_symbols(symbols, f),
+            TopLevel::Function(function) => function.to_code(source, symbols, f),
             TopLevel::StaticVariable(static_var) => write!(f, "{}", static_var),
         }
     }
@@ -53,7 +56,7 @@ impl From<ir::StaticVar> for StaticVar {
 
 impl fmt::Display for StaticVar {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        todo!()
+        Ok(())
     }
 }
 
@@ -66,6 +69,22 @@ pub struct Program {
 impl Program {
     pub fn iter(&self) -> std::slice::Iter<'_, TopLevel> {
         self.top_level.iter()
+    }
+}
+
+impl ToCode for Program {
+    fn to_code(&self, source: impl ToString, symbols: SymbolMap, f: &mut Formatter) -> fmt::Result {
+        writeln!(f, "{}", self.symbols)?;
+
+        for def in &self.top_level {
+            def.to_code(source.to_string(), self.symbols.clone(), f)?;
+        }
+
+        if cfg!(target_os = "linux") {
+            writeln!(f, "\t.section .note.GNU-stack,\"\",@progbits")?;
+        }
+
+        Ok(())
     }
 }
 
@@ -110,23 +129,9 @@ impl Display for SymbolMap {
     }
 }
 
-impl Display for Program {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        for def in &self.top_level {
-            def.fmt_with_symbols(&self.symbols, f)?;
-        }
-
-        if cfg!(target_os = "linux") {
-            writeln!(f, "\t.section .note.GNU-stack,\"\",@progbits")?;
-        }
-
-        Ok(())
-    }
-}
-
 #[derive(Debug, PartialEq)]
 pub struct Function {
-    pub name: String,
+    pub name: Identifier,
     pub global: bool,
     pub instructions: Vec<Instruction>,
     pub stack_size: i32,
@@ -147,20 +152,12 @@ impl From<ir::Function> for Function {
 
         for (i, param) in function.params.iter().enumerate() {
             if i < 6 {
-                instructions.push(Instruction::Comment(format!(
-                    "Param {i} - {param} came in {}",
-                    ARG_REGISTERS[i]
-                )));
                 instructions.push(Instruction::Mov(
                     Operand::Reg(ARG_REGISTERS[i]),
                     Operand::Pseudo(param.clone()),
                 ));
             } else {
                 // we skip the first one because it's the return address, hence the -4 and not -5
-                instructions.push(Instruction::Comment(format!(
-                    "Param {i} - {param} came in stack {}",
-                    (i as i32 - 4) * 8
-                )));
                 instructions.push(Instruction::Mov(
                     Operand::Stack((i as i32 - 4) * 8),
                     Operand::Pseudo(param.clone()),
@@ -185,12 +182,8 @@ impl From<ir::Function> for Function {
     }
 }
 
-trait DisplayWithSymbolMap {
-    fn fmt_with_symbols(&self, symbols: &SymbolMap, f: &mut Formatter) -> fmt::Result;
-}
-
-impl DisplayWithSymbolMap for Function {
-    fn fmt_with_symbols(&self, symbols: &SymbolMap, f: &mut Formatter) -> fmt::Result {
+impl ToCode for Function {
+    fn to_code(&self, source: impl ToString, symbols: SymbolMap, f: &mut Formatter) -> fmt::Result {
         if let Some(info) = symbols.get(&self.name) {
             // TODO: evaluate need to error check here
             if let Some(info) = info.as_function() {
@@ -200,7 +193,7 @@ impl DisplayWithSymbolMap for Function {
             }
         }
 
-        writeln!(f, ".text")?;
+        writeln!(f, "\t.text")?;
         if cfg!(target_os = "macos") {
             writeln!(f, "_{}:", self.name)?;
         } else {
@@ -209,7 +202,7 @@ impl DisplayWithSymbolMap for Function {
         writeln!(f, "\tpushq\t%rbp")?;
         writeln!(f, "\tmovq\t%rsp, %rbp")?;
         for instruction in &self.instructions {
-            writeln!(f, "{}", instruction)?;
+            instruction.to_code(source.to_string(), symbols.clone(), f)?;
         }
         Ok(())
     }
@@ -498,8 +491,6 @@ impl Display for Condition {
     }
 }
 
-type Identifier = String;
-
 #[derive(Debug, PartialEq)]
 pub enum Instruction {
     Mov(Operand, Operand),
@@ -512,24 +503,26 @@ pub enum Instruction {
     JmpCC(Condition, Identifier),
     SetCC(Condition, Operand),
     Label(Identifier),
-    AllocateStack(i32, String),
+    AllocateStack(i32),
     DeallocateStack(i32),
     Push(Operand),
     Pop(Operand),
     Call(Identifier),
     Ret(Ret),
-    Comment(String),
+    SpanOnly(Span),
+    // Comment(String),
 }
 
-macro_rules! comment {
-    ($instructions:expr, $($arg:tt)*) => {
-        $instructions.push(Instruction::Comment(format!($($arg)*)));
-    };
-}
+// macro_rules! comment {
+//     ($instructions:expr, $($arg:tt)*) => {
+//         $instructions.push(Instruction::Comment(format!($($arg)*)));
+//     };
+// }
 
 fn from(instruction: ir::Instruction, context: &ir::Function) -> Vec<Instruction> {
     match instruction {
-        ir::Instruction::Unary(op, src, dst) => match op {
+        ir::Instruction::SpanOnly(span) => vec![Instruction::SpanOnly(span)],
+        ir::Instruction::Unary(op, src, dst, span) => match op {
             ir::UnaryOperator::Not => vec![
                 Instruction::Cmp(Operand::Imm(0), src.into()),
                 Instruction::Mov(Operand::Imm(0), dst.clone().into()),
@@ -540,11 +533,11 @@ fn from(instruction: ir::Instruction, context: &ir::Function) -> Vec<Instruction
                 Instruction::Unary(op.into(), dst.into()),
             ],
         },
-        ir::Instruction::Return(val) => vec![
+        ir::Instruction::Return(val, _span) => vec![
             Instruction::Mov(val.into(), Operand::Reg(Reg::AX)),
             Instruction::Ret(Ret),
         ],
-        ir::Instruction::Binary(op, src1, src2, dst) => match op {
+        ir::Instruction::Binary(op, src1, src2, dst, span) => match op {
             ir::BinaryOperator::Add
             | ir::BinaryOperator::Subtract
             | ir::BinaryOperator::Multiply
@@ -605,50 +598,36 @@ fn from(instruction: ir::Instruction, context: &ir::Function) -> Vec<Instruction
             ],
             op => todo!("{:?}", op),
         },
-        ir::Instruction::JumpIfZero(val, target) => vec![
+        ir::Instruction::JumpIfZero(val, target, span) => vec![
             Instruction::Cmp(Operand::Imm(0), val.into()),
             Instruction::JmpCC(Condition::E, target),
         ],
-        ir::Instruction::JumpIfNotZero(val, target) => vec![
+        ir::Instruction::JumpIfNotZero(val, target, span) => vec![
             Instruction::Cmp(Operand::Imm(0), val.into()),
             Instruction::JmpCC(Condition::NE, target),
         ],
-        ir::Instruction::Jump(target) => vec![Instruction::Jmp(target)],
-        ir::Instruction::Label(label) => vec![Instruction::Label(label)],
-        ir::Instruction::Copy(src, dst) => vec![Instruction::Mov(src.into(), dst.into())],
-        ir::Instruction::FunCall(fun_name, args, dst) => {
-            let mut instructions = Vec::new();
-
-            comment!(instructions, "Starting call: {fun_name}");
+        ir::Instruction::Jump(target, span) => {
+            vec![Instruction::Jmp(target)]
+        }
+        ir::Instruction::Label(label, span) => {
+            vec![Instruction::Label(label)]
+        }
+        ir::Instruction::Copy(src, dst, span) => vec![Instruction::Mov(src.into(), dst.into())],
+        ir::Instruction::FunCall(fun_name, args, dst, span) => {
+            let mut instructions = vec![];
 
             // adjust stack alignment
             let (register_args, stack_args) = safe_split_at(&args, 6);
             let stack_padding = if stack_args.len() % 2 == 0 { 0 } else { 8 };
 
             if stack_padding > 0 {
-                comment!(instructions, "Adjust stack alignment");
-                instructions.push(Instruction::AllocateStack(
-                    stack_padding,
-                    "Padding for arguments".to_string(),
-                ));
-            }
-
-            if !register_args.is_empty() {
-                instructions.push(Instruction::Comment(
-                    "Passing arguments in registers".to_string(),
-                ));
+                instructions.push(Instruction::AllocateStack(stack_padding));
             }
 
             // pass args in registers
             for (reg_index, tacky_arg) in register_args.iter().enumerate() {
                 let r = ARG_REGISTERS[reg_index];
                 instructions.push(Instruction::Mov(tacky_arg.clone().into(), Operand::Reg(r)));
-            }
-
-            if !stack_args.is_empty() {
-                instructions.push(Instruction::Comment(
-                    "Passing arguments on stack".to_string(),
-                ));
             }
 
             // pass args on stack
@@ -658,8 +637,6 @@ fn from(instruction: ir::Instruction, context: &ir::Function) -> Vec<Instruction
                     Operand::Imm(_) => instructions.push(Instruction::Push(assembly_arg)),
                     Operand::Reg(_) => instructions.push(Instruction::Push(assembly_arg)),
                     _ => {
-                        comment!(instructions, "Saving return value");
-                        comment!(instructions, "Moving {assembly_arg} into EAX");
                         instructions.push(Instruction::Mov(assembly_arg, Operand::Reg(Reg::AX)));
                         instructions.push(Instruction::Push(Operand::Reg(Reg::AX)));
                     }
@@ -667,70 +644,72 @@ fn from(instruction: ir::Instruction, context: &ir::Function) -> Vec<Instruction
             }
 
             // emit call instruction
-            comment!(instructions, "Calls {fun_name}");
             instructions.push(Instruction::Call(fun_name));
 
             // adjust stack pointer
             let bytes_to_remove = 8 * stack_args.len() as i32 + stack_padding;
             if bytes_to_remove > 0 {
-                instructions.push(Instruction::Comment("Adjust stack pointer".to_string()));
                 instructions.push(Instruction::DeallocateStack(bytes_to_remove));
             }
 
             // retrieve return value
-            comment!(instructions, "Setting return value into {dst:?}");
             instructions.push(Instruction::Mov(Operand::Reg(Reg::AX), dst.into()));
-
-            comment!(instructions, "Ending call");
-
             instructions
         }
     }
 }
 
-impl Display for Instruction {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+impl ToCode for Instruction {
+    fn to_code(
+        &self,
+        source: impl ToString,
+        sumbols: SymbolMap,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        let source = source.to_string();
         match self {
-            Instruction::Mov(src, dst) => write!(f, "\tmovl\t{}, {}", src, dst),
-            Instruction::Unary(operator, operand) => write!(f, "\t{}\t{}", operator, operand),
-            Instruction::AllocateStack(size, comment) => {
-                write!(f, "\tsubq\t${}, %rsp\t# {}", size, comment)
-            }
-            Instruction::Ret(ret) => write!(f, "\t{}", ret),
+            Instruction::Mov(src, dst) => writeln!(f, "\tmovl\t{}, {}", src, dst),
+            Instruction::Unary(operator, operand) => writeln!(f, "\t{}\t{}", operator, operand),
+            Instruction::AllocateStack(size) => writeln!(f, "\tsubq\t${}, %rsp", size),
+            Instruction::Ret(ret) => writeln!(f, "\t{}", ret),
             Instruction::Binary(operator, src1, src2) => {
-                write!(f, "\t{}\t{}, {}", operator, src1, src2)
+                writeln!(f, "\t{}\t{}, {}", operator, src1, src2)
             }
-            Instruction::Idiv(operand) => write!(f, "\tidivl\t{}", operand),
-            Instruction::Cdq => write!(f, "\tcdq"),
-            Instruction::Cmp(op1, op2) => write!(f, "\tcmpl\t{}, {}", op1, op2),
-            Instruction::Jmp(target) => write!(f, "\tjmp\t.L{}", target),
-            Instruction::JmpCC(condition, target) => write!(f, "\tj{}\t.L{}", condition, target),
+            Instruction::Idiv(operand) => writeln!(f, "\tidivl\t{}", operand),
+            Instruction::Cdq => writeln!(f, "\tcdq"),
+            Instruction::Cmp(op1, op2) => writeln!(f, "\tcmpl\t{}, {}", op1, op2),
+            Instruction::Jmp(target) => writeln!(f, "\tjmp\t.L{}", target),
+            Instruction::JmpCC(condition, target) => writeln!(f, "\tj{}\t.L{}", condition, target),
             Instruction::SetCC(condition, operand) => {
                 // TODO: implement this logic
                 // if let Operand::Reg(reg) = operand {
                 //     let reg = get_1byte_reg(reg);
-                //     return write!(f, "\tset{}\t{}", condition, reg);
+                //     return writeln!(f, "\tset{}\t{}", condition, reg);
                 // }
-                write!(f, "\tset{}\t{}", condition, operand)
+                writeln!(f, "\tset{}\t{}", condition, operand)
             }
-            Instruction::Label(label) => write!(f, ".L{}:", label),
+            Instruction::Label(label) => writeln!(f, ".L{}:", label),
             Instruction::Push(operand) => {
                 let operand = operand.as_64bit();
-                write!(f, "\tpushq\t{}", operand)
+                writeln!(f, "\tpushq\t{}", operand)
             }
             Instruction::Pop(operand) => {
                 let operand = operand.as_64bit();
-                write!(f, "\tpopq\t{}", operand)
+                writeln!(f, "\tpopq\t{}", operand)
             }
             Instruction::Call(identifier) => {
                 if cfg!(target_os = "linux") {
-                    write!(f, "\tcall\t{}@PLT", identifier)
+                    writeln!(f, "\tcall\t{}@PLT", identifier)
                 } else {
-                    write!(f, "\tcall\t_{}", identifier)
+                    writeln!(f, "\tcall\t_{}", identifier)
                 }
             }
-            Instruction::DeallocateStack(size) => write!(f, "\taddq\t${}, %rsp", size),
-            Instruction::Comment(comment) => write!(f, "\t# {}", comment),
+            Instruction::DeallocateStack(size) => writeln!(f, "\taddq\t${}, %rsp", size),
+            Instruction::SpanOnly(span) => writeln!(
+                f,
+                "\n\t# {}",
+                span.value(&source).split('\n').next().unwrap()
+            ),
             ins => unimplemented!("{:?}", ins),
         }
     }
@@ -814,12 +793,16 @@ pub enum Operand {
     Reg16(Reg16),
     Reg32(Reg32),
     Reg64(Reg64),
-    Pseudo(String),
+    Pseudo(Identifier),
     Stack(i32),
-    Data(String),
+    Data(Identifier),
 }
 
 impl Operand {
+    fn is_memory(&self) -> bool {
+        matches!(self, Operand::Stack(_) | Operand::Data(_))
+    }
+
     fn as_8bit(&self) -> Operand {
         match self {
             Operand::Reg(reg) => Operand::Reg8(reg.as_8bit()),
@@ -868,17 +851,19 @@ impl Display for Operand {
 impl From<ir::Val> for Operand {
     fn from(val: ir::Val) -> Self {
         match val {
-            ir::Val::Constant(value) => Operand::Imm(value),
-            ir::Val::Var(identifier) => Operand::Pseudo(identifier),
+            ir::Val::Constant(value, _span) => Operand::Imm(value),
+            ir::Val::Var(identifier, _span) => Operand::Pseudo(identifier),
         }
     }
 }
 
-pub struct Assembler;
+pub struct Assembler<'a> {
+    source: &'a str,
+}
 
-impl Assembler {
-    pub fn new() -> Assembler {
-        Assembler {}
+impl<'a> Assembler<'a> {
+    pub fn new(source: &'a str) -> Assembler {
+        Assembler { source }
     }
 
     pub fn assemble(&self, program: ir::Program, symbols: SymbolMap) -> miette::Result<Program> {
@@ -924,15 +909,22 @@ impl Assembler {
             symbols: &SymbolMap,
             operand: Operand,
             stack_offset: &mut i32,
-            stack_map: &mut HashMap<String, i32>,
+            stack_map: &mut HashMap<Identifier, i32>,
         ) -> Operand {
             match operand {
                 Operand::Pseudo(pseudo) => {
+                    let symbol = symbols.get(&pseudo);
                     if let Some(offset) = stack_map.get(&pseudo) {
                         Operand::Stack(*offset)
-                    } else if let Some(symbol) = symbols.get(&pseudo) {
-                        Operand::Data(pseudo)
                     } else {
+                        if let Some(symbol) = symbol {
+                            if let TypeInfo::Variable(var) = &symbol.info {
+                                if let VarAttrs::Static { global, .. } = &var.attrs {
+                                    return Operand::Data(pseudo);
+                                }
+                            }
+                        }
+
                         *stack_offset -= 4;
                         stack_map.insert(pseudo, *stack_offset);
                         Operand::Stack(*stack_offset)
@@ -959,9 +951,9 @@ impl Assembler {
                         handle_operand(symbols, operand, &mut stack_size, &mut pseudo_map);
                     Instruction::Unary(op, operand)
                 }
-                Instruction::AllocateStack(size, comment) => {
+                Instruction::AllocateStack(size) => {
                     stack_size -= size;
-                    Instruction::AllocateStack(size, format!("Aligned for {}", comment))
+                    Instruction::AllocateStack(size)
                 }
                 Instruction::Idiv(operand) => {
                     let operand =
@@ -996,13 +988,7 @@ impl Assembler {
 
         if stack_size != 0 {
             let aligned_stack_size = (-stack_size + 15) & !15;
-            instructions.insert(
-                0,
-                Instruction::AllocateStack(
-                    aligned_stack_size,
-                    format!("Function declaration alignment (from {stack_size})"),
-                ),
-            );
+            instructions.insert(0, Instruction::AllocateStack(aligned_stack_size));
         }
 
         Function {
@@ -1035,56 +1021,75 @@ impl Assembler {
         let instructions = function
             .instructions
             .into_iter()
-            .flat_map(|instruction| match instruction {
-                Instruction::Mov(src, dst) => match (src, dst) {
-                    (Operand::Stack(src), Operand::Stack(dst)) => {
-                        vec![
-                            Instruction::Mov(Operand::Stack(src), Operand::Reg(Reg::R10)),
-                            Instruction::Mov(Operand::Reg(Reg::R10), Operand::Stack(dst)),
-                        ]
-                    }
-                    (Operand::Data(src), Operand::Stack(dst)) => {
-                        vec![
-                            Instruction::Mov(Operand::Data(src), Operand::Reg(Reg::R10)),
-                            Instruction::Mov(Operand::Reg(Reg::R10), Operand::Stack(dst)),
-                        ]
-                    }
-                    (src, dst) => vec![Instruction::Mov(src, dst)],
-                },
-                Instruction::Idiv(operand) => vec![
-                    Instruction::Mov(operand, Operand::Reg(Reg::R10)),
-                    Instruction::Idiv(Operand::Reg(Reg::R10)),
-                ],
-                Instruction::Binary(op, src1, src2) => match (&op, src1, src2) {
-                    (BinaryOperator::Add, Operand::Stack(src1), Operand::Stack(src2))
-                    | (BinaryOperator::Sub, Operand::Stack(src1), Operand::Stack(src2))
-                    | (BinaryOperator::ShiftLeft, Operand::Stack(src1), Operand::Stack(src2))
-                    | (BinaryOperator::ShiftRight, Operand::Stack(src1), Operand::Stack(src2)) => {
-                        vec![
-                            Instruction::Mov(Operand::Stack(src1), Operand::Reg(Reg::R10)),
-                            Instruction::Binary(op, Operand::Reg(Reg::R10), Operand::Stack(src2)),
-                        ]
-                    }
-                    (BinaryOperator::Mul, src1, Operand::Stack(src2))
-                    | (BinaryOperator::And, src1, Operand::Stack(src2))
-                    | (BinaryOperator::Or, src1, Operand::Stack(src2))
-                    | (BinaryOperator::Xor, src1, Operand::Stack(src2)) => vec![
-                        Instruction::Mov(Operand::Stack(src2), Operand::Reg(Reg::R11)),
-                        Instruction::Binary(op, src1, Operand::Reg(Reg::R11)),
-                        Instruction::Mov(Operand::Reg(Reg::R11), Operand::Stack(src2)),
+            .flat_map(|instruction| {
+                println!("instr: {instruction:?}");
+                match instruction {
+                    Instruction::Mov(src, dst) => match (src, dst) {
+                        (Operand::Stack(src), Operand::Stack(dst)) => {
+                            vec![
+                                Instruction::Mov(Operand::Stack(src), Operand::Reg(Reg::R10)),
+                                Instruction::Mov(Operand::Reg(Reg::R10), Operand::Stack(dst)),
+                            ]
+                        }
+                        (Operand::Data(src), Operand::Stack(dst)) => {
+                            vec![
+                                Instruction::Mov(Operand::Data(src), Operand::Reg(Reg::R10)),
+                                Instruction::Mov(Operand::Reg(Reg::R10), Operand::Stack(dst)),
+                            ]
+                        }
+                        (Operand::Stack(src), Operand::Data(dst)) => {
+                            vec![
+                                Instruction::Mov(Operand::Stack(src), Operand::Reg(Reg::R10)),
+                                Instruction::Mov(Operand::Reg(Reg::R10), Operand::Data(dst)),
+                            ]
+                        }
+                        (src, dst) => vec![Instruction::Mov(src, dst)],
+                    },
+                    Instruction::Idiv(operand) => vec![
+                        Instruction::Mov(operand, Operand::Reg(Reg::R10)),
+                        Instruction::Idiv(Operand::Reg(Reg::R10)),
                     ],
-                    (op, src1, src2) => vec![Instruction::Binary(*op, src1, src2)],
-                },
-                Instruction::Cmp(Operand::Stack(op1), Operand::Stack(op2)) => vec![
-                    Instruction::Mov(Operand::Stack(op1), Operand::Reg(Reg::R10)),
-                    Instruction::Cmp(Operand::Reg(Reg::R10), Operand::Stack(op2)),
-                ],
-                Instruction::Cmp(op1, Operand::Imm(op2)) => vec![
-                    Instruction::Mov(Operand::Imm(op2), Operand::Reg(Reg::R11)),
-                    Instruction::Cmp(op1, Operand::Reg(Reg::R11)),
-                ],
+                    Instruction::Binary(op, src1, src2) => match (&op, src1, src2) {
+                        (BinaryOperator::Add, src1, src2)
+                        | (BinaryOperator::Sub, src1, src2)
+                        | (BinaryOperator::ShiftLeft, src1, src2)
+                        | (BinaryOperator::ShiftRight, src1, src2) => {
+                            if src1.is_memory() || src2.is_memory() {
+                                vec![
+                                    Instruction::Mov(src1, Operand::Reg(Reg::R10)),
+                                    Instruction::Binary(op, Operand::Reg(Reg::R10), src2),
+                                ]
+                            } else {
+                                vec![Instruction::Binary(op, src1, src2)]
+                            }
+                        }
+                        (BinaryOperator::Mul, src1, Operand::Stack(src2))
+                        | (BinaryOperator::And, src1, Operand::Stack(src2))
+                        | (BinaryOperator::Or, src1, Operand::Stack(src2))
+                        | (BinaryOperator::Xor, src1, Operand::Stack(src2)) => vec![
+                            Instruction::Mov(Operand::Stack(src2), Operand::Reg(Reg::R11)),
+                            Instruction::Binary(op, src1, Operand::Reg(Reg::R11)),
+                            Instruction::Mov(Operand::Reg(Reg::R11), Operand::Stack(src2)),
+                        ],
+                        (op, src1, src2) => vec![Instruction::Binary(*op, src1, src2)],
+                    },
+                    Instruction::Cmp(op1, Operand::Imm(op2)) => vec![
+                        Instruction::Mov(Operand::Imm(op2), Operand::Reg(Reg::R11)),
+                        Instruction::Cmp(op1, Operand::Reg(Reg::R11)),
+                    ],
+                    Instruction::Cmp(op1, op2) => {
+                        if op1.is_memory() || op2.is_memory() {
+                            vec![
+                                Instruction::Mov(op1, Operand::Reg(Reg::R10)),
+                                Instruction::Cmp(Operand::Reg(Reg::R10), op2),
+                            ]
+                        } else {
+                            vec![Instruction::Cmp(op1, op2)]
+                        }
+                    }
 
-                instr => vec![instr],
+                    instr => vec![instr],
+                }
             })
             .collect::<Vec<_>>();
 
