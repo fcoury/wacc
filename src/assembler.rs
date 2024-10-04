@@ -32,7 +32,7 @@ impl ToCode for TopLevel {
     fn to_code(&self, source: impl ToString, symbols: SymbolMap, f: &mut Formatter) -> fmt::Result {
         match self {
             TopLevel::Function(function) => function.to_code(source, symbols, f),
-            TopLevel::StaticVariable(static_var) => write!(f, "{}", static_var),
+            TopLevel::StaticVariable(static_var) => Ok(()),
         }
     }
 }
@@ -54,8 +54,26 @@ impl From<ir::StaticVar> for StaticVar {
     }
 }
 
-impl fmt::Display for StaticVar {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+impl ToCode for StaticVar {
+    fn to_code(&self, source: impl ToString, symbols: SymbolMap, f: &mut Formatter) -> fmt::Result {
+        if let Some(info) = symbols.get(&self.name) {
+            if let TypeInfo::Variable(var) = &info.info {
+                if let VarAttrs::Static { global, .. } = &var.attrs {
+                    if *global {
+                        writeln!(f, "\t.global {}", self.name)?;
+                    }
+                }
+            }
+        }
+
+        writeln!(f, "\t.data")?;
+        if cfg!(target_os = "macos") {
+            writeln!(f, "_{}:", self.name)?;
+        } else {
+            writeln!(f, "{}:", self.name)?;
+        }
+        writeln!(f, "\t.long {}", self.init)?;
+
         Ok(())
     }
 }
@@ -74,10 +92,80 @@ impl Program {
 
 impl ToCode for Program {
     fn to_code(&self, source: impl ToString, symbols: SymbolMap, f: &mut Formatter) -> fmt::Result {
-        writeln!(f, "{}", self.symbols)?;
+        let static_vars: Vec<&StaticVar> = self
+            .top_level
+            .iter()
+            .filter_map(|item| {
+                if let TopLevel::StaticVariable(static_var) = item {
+                    Some(static_var)
+                } else {
+                    None
+                }
+            })
+            .collect();
 
-        for def in &self.top_level {
-            def.to_code(source.to_string(), self.symbols.clone(), f)?;
+        let functions: Vec<&Function> = self
+            .top_level
+            .iter()
+            .filter_map(|item| {
+                if let TopLevel::Function(function) = item {
+                    Some(function)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for var in static_vars {
+            let Some(symbol_def) = symbols.get(&var.name) else {
+                eprintln!("Symbol not found: {:?}", var.name);
+                continue;
+            };
+
+            let TypeInfo::Variable(var_symbol) = &symbol_def.info else {
+                eprintln!("Symbol not a variable: {:?}", var.name);
+                continue;
+            };
+
+            if let VarAttrs::Static { init, global } = &var_symbol.attrs {
+                match init {
+                    InitialValue::Initial(val) => {
+                        if *global {
+                            writeln!(f, "\t.global {}", var.name)?;
+                        }
+                        writeln!(f, "\t.data")?;
+                        if cfg!(target_os = "macos") {
+                            writeln!(f, "_{}:", var.name)?;
+                        } else {
+                            writeln!(f, "{}:", var.name)?;
+                        }
+                        writeln!(f, "\t.long {}", val)?;
+                    }
+                    InitialValue::NoInitializer => {
+                        if *global {
+                            writeln!(f, "\t.global {}", var.name)?;
+                        }
+                    }
+                    _ => {
+                        if *global {
+                            writeln!(f, "\t.global {}", var.name)?;
+                        }
+                        writeln!(f, "\t.bss")?;
+                        if cfg!(target_os = "macos") {
+                            writeln!(f, "\t.balign 4")?;
+                            writeln!(f, "_{}:", var.name)?;
+                        } else {
+                            writeln!(f, "\t.align 4")?;
+                            writeln!(f, "{}:", var.name)?;
+                        }
+                        writeln!(f, "\t.zero 4")?;
+                    }
+                }
+            }
+        }
+
+        for function in functions {
+            function.to_code(source.to_string(), self.symbols.clone(), f)?;
         }
 
         if cfg!(target_os = "linux") {
