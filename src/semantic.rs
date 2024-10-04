@@ -97,10 +97,6 @@ impl Analysis {
             );
             Ok(decl.clone())
         } else {
-            let init = match &decl.init {
-                Some(exp) => Some(resolve_exp(identifier_map, exp)?),
-                None => None,
-            };
             let unique_name = context.next_var(&decl.name);
             identifier_map.insert(
                 decl.name.clone(),
@@ -110,6 +106,10 @@ impl Analysis {
                     has_linkage: false,
                 },
             );
+            let init = match &decl.init {
+                Some(exp) => Some(resolve_exp(identifier_map, exp)?),
+                None => None,
+            };
             Ok(VarDecl {
                 name: unique_name,
                 typ: decl.typ.clone(),
