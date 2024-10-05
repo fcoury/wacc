@@ -994,6 +994,17 @@ impl<'a> Parser<'a> {
         let span_start = self.tokens[0].span.start;
         let mut left = self.parse_factor()?;
 
+        if matches!(left, Exp::Cast(_, _, _, _)) {
+            // TODO: improve where this points to, currently it points to the end of the expression
+            return Err(miette::miette! {
+                labels = vec![
+                    LabeledSpan::at(&self.tokens[0], "here"),
+                ],
+                "lvalue casts are not supported"
+            }
+            .with_source_code(self.source.to_string()));
+        }
+
         loop {
             let Some(next_token) = self.peek() else {
                 break;
