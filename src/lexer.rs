@@ -206,7 +206,7 @@ impl<'a> Lexer<'a> {
                                 TokenKind::Identifier(token_str.to_string())
                             }
                             TokenKind::Int(_) => TokenKind::Int(token_str.to_string()),
-                            TokenKind::Long(_) => TokenKind::Int(token_str.to_string()),
+                            TokenKind::Long(_) => TokenKind::Long(token_str.to_string()),
                             typ => typ,
                         };
                         // println!("Token: {} => {:?}", token_str, token);
@@ -260,7 +260,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_long() {
+    fn lex_long() {
         let input = "10l";
         let mut lexer = Lexer::new(input);
         let tokens = lexer.run().unwrap();

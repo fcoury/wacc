@@ -489,11 +489,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        let resolved_type = self.parse_type(&types)?;
-
-        if types.len() > 1 {
-            bail!(self, "Multiple type specifiers are not allowed");
-        }
+        let resolved_type = self.parse_types(&types)?;
 
         if types.is_empty() {
             bail!(self, "Expected type specifier");
@@ -506,7 +502,7 @@ impl<'a> Parser<'a> {
         Ok((resolved_type, storage_classes.pop()))
     }
 
-    fn parse_type(&self, types: &[Type]) -> miette::Result<Type> {
+    fn parse_types(&self, types: &[Type]) -> miette::Result<Type> {
         let resolved_type = match types {
             [Type::Int] => Type::Int,
             [Type::Int, Type::Long] | [Type::Long, Type::Int] | [Type::Long] => Type::Long,
@@ -528,6 +524,22 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_type_specifiers(&mut self) -> miette::Result<Type> {
+        let mut types = vec![];
+        loop {
+            if self.peek() == Some(TokenKind::IntKeyword) {
+                types.push(Type::Int);
+                self.take_token();
+            } else if self.peek() == Some(TokenKind::LongKeyword) {
+                types.push(Type::Long);
+                self.take_token();
+            } else {
+                break;
+            }
+        }
+        self.parse_types(&types)
+    }
+
     pub fn parse_param_list(&mut self) -> miette::Result<Vec<VarDecl>> {
         let span_start = self.tokens[0].span.start;
         let mut params = vec![];
@@ -536,7 +548,7 @@ impl<'a> Parser<'a> {
         } else if let Some(token) = self.peek() {
             if token.is_type_specifier() {
                 loop {
-                    let typ = self.parse_type_specifier()?;
+                    let typ = self.parse_type_specifiers()?;
                     let name = self.parse_identifier()?;
                     params.push(VarDecl {
                         name,
@@ -860,6 +872,17 @@ impl<'a> Parser<'a> {
             Ok(Exp::Unary(operator, inner_exp, span))
         } else if next_token == Some(TokenKind::OpenParen) {
             self.take_token(); // skips OpenParen
+            if let Some(token) = self.peek() {
+                if token.is_type_specifier() {
+                    let typ = self.parse_type_specifier()?;
+                    self.expect(TokenKind::CloseParen, "expression")?;
+                    return Ok(Exp::Cast(
+                        typ,
+                        Box::new(self.parse_exp(None)?),
+                        Span::empty(),
+                    ));
+                }
+            }
             let exp = self.parse_exp(None)?;
             self.expect(TokenKind::CloseParen, "expression")?;
             Ok(exp)
