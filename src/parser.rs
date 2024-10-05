@@ -884,14 +884,12 @@ impl<'a> Parser<'a> {
         let token = self.tokens[0].clone();
 
         if !matches!(token.kind, TokenKind::Int(_) | TokenKind::Long(_)) {
-            println!("Not a constant: {:?}", token);
             return Ok(None);
         }
 
         self.take_token(); // consume type token
 
         // parse value of the token as int
-        println!("token: {:?}", token);
         let token_val = token.origin.strip_suffix("l").unwrap_or(token.origin);
         let v = match token_val.parse::<i64>() {
             Ok(v) => v,
@@ -993,17 +991,6 @@ impl<'a> Parser<'a> {
     pub fn parse_exp(&mut self, min_prec: Option<u8>) -> miette::Result<Exp> {
         let span_start = self.tokens[0].span.start;
         let mut left = self.parse_factor()?;
-
-        if matches!(left, Exp::Cast(_, _, _, _)) {
-            // TODO: improve where this points to, currently it points to the end of the expression
-            return Err(miette::miette! {
-                labels = vec![
-                    LabeledSpan::at(&self.tokens[0], "here"),
-                ],
-                "lvalue casts are not supported"
-            }
-            .with_source_code(self.source.to_string()));
-        }
 
         loop {
             let Some(next_token) = self.peek() else {
