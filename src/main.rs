@@ -107,7 +107,7 @@ fn compile(input_file: &Path, args: &Args) -> miette::Result<()> {
 
     let mut analysis = semantic::Analysis::new(ast);
     let (symbols, ast) = analysis
-        .run()
+        .run(&input)
         .wrap_err(format!("Error validating {}", args.input.to_string_lossy()))?;
     println!("\nAST after Semantic Pass:");
     for line in ast.iter() {

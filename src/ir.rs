@@ -416,21 +416,21 @@ pub fn emit_ir(
     context: &mut Context,
 ) -> Val {
     match exp {
-        parser::Exp::Var(name, span) => Val::Var(name, Some(span)),
-        parser::Exp::Assignment(exp, rhs, span) => match exp.as_ref() {
-            parser::Exp::Var(name, _span) => {
+        parser::Exp::Var(name, _typ, span) => Val::Var(name, Some(span)),
+        parser::Exp::Assignment(exp, rhs, _typ, span) => match exp.as_ref() {
+            parser::Exp::Var(name, _typ, _span) => {
                 emit_assignment(name.clone(), *rhs, instructions, context, span)
             }
-            parser::Exp::Constant(_, _) => todo!(),
-            parser::Exp::Assignment(_, _, _) => todo!(),
-            parser::Exp::Unary(_, _, _) => todo!(),
-            parser::Exp::BinaryOperation(_, _, _, _) => todo!(),
-            parser::Exp::Conditional(_, _, _, _) => todo!(),
-            parser::Exp::FunctionCall(_, _, _) => todo!(),
-            parser::Exp::Cast(_, _exp, _span) => todo!(),
+            parser::Exp::Constant(_, _typ, _) => todo!(),
+            parser::Exp::Assignment(_, _, _typ, _) => todo!(),
+            parser::Exp::Unary(_, _, _typ, _) => todo!(),
+            parser::Exp::BinaryOperation(_, _, _, _typ, _) => todo!(),
+            parser::Exp::Conditional(_, _, _, _typ, _) => todo!(),
+            parser::Exp::FunctionCall(_, _, _typ, _) => todo!(),
+            parser::Exp::Cast(_, _exp, _typ, _span) => todo!(),
         },
-        parser::Exp::Constant(_value, _span) => todo!(), // Val::Constant(value, Some(span)),
-        parser::Exp::Unary(operator, exp, span) => {
+        parser::Exp::Constant(_value, _typ, _span) => todo!(), // Val::Constant(value, Some(span)),
+        parser::Exp::Unary(operator, exp, _typ, span) => {
             let src = emit_ir(*exp, instructions, context);
             let dst = Val::Var(context.next_var(), None);
             instructions.push(Instruction::Unary(
@@ -441,7 +441,7 @@ pub fn emit_ir(
             ));
             dst
         }
-        parser::Exp::BinaryOperation(oper, v1, v2, _span) => match oper {
+        parser::Exp::BinaryOperation(oper, v1, v2, _typ, _span) => match oper {
             parser::BinaryOperator::Or => {
                 let short_circuit_label = context.next_label("short_circuit");
                 let end_label = context.next_label("end");
@@ -550,7 +550,7 @@ pub fn emit_ir(
                 dst
             }
         },
-        parser::Exp::Conditional(cond, e1, e2, _span) => {
+        parser::Exp::Conditional(cond, e1, e2, _typ, _span) => {
             // Emit instructions for condition
             let c = emit_ir(*cond, instructions, context);
 
@@ -588,7 +588,7 @@ pub fn emit_ir(
             // Return result
             Val::Var(result, None)
         }
-        parser::Exp::FunctionCall(name, params, _span) => {
+        parser::Exp::FunctionCall(name, params, _typ, _span) => {
             let params = params
                 .iter()
                 .map(|p| emit_ir(p.clone(), instructions, context))
@@ -605,7 +605,7 @@ pub fn emit_ir(
 
             Val::Var(result, None)
         }
-        parser::Exp::Cast(_, _exp, _span) => todo!(),
+        parser::Exp::Cast(_, _exp, _typ, _span) => todo!(),
     }
 }
 
@@ -700,7 +700,8 @@ fn convert_symbols_to_tacky(symbols: &SymbolMap) -> Vec<TopLevel> {
                         tacky_defs.push(TopLevel::StaticVariable(StaticVar {
                             name: name.clone(),
                             global: *global,
-                            init: Val::Constant(*i, None),
+                            // TODO: init: Val::Constant(*i, None),
+                            init: todo!(),
                         }));
                     }
                     InitialValue::Tentative => {

@@ -6,7 +6,10 @@ use strum::EnumProperty;
 use strum_macros::EnumProperty;
 use thiserror::Error;
 
-use crate::lexer::{Span, Token, TokenKind};
+use crate::{
+    lexer::{Span, Token, TokenKind},
+    semantic::StaticInit,
+};
 
 #[derive(Error, Debug)]
 #[error("{message}")]
@@ -85,9 +88,42 @@ impl fmt::Display for Identifier {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
+    Undefined,
     Int,
     Long,
-    FunType { params: Vec<Type>, ret: Box<Type> },
+    #[allow(clippy::enum_variant_names)]
+    FunType {
+        params: Vec<Type>,
+        ret: Box<Type>,
+    },
+}
+
+impl Type {
+    pub fn default_init(&self) -> Option<StaticInit> {
+        match self {
+            Type::Int => Some(StaticInit::IntInit(0)),
+            Type::Long => Some(StaticInit::LongInit(0)),
+            Type::FunType { .. } => None,
+            Type::Undefined => None,
+        }
+    }
+}
+
+impl fmt::Display for Type {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Type::Undefined => unreachable!(),
+            Type::Int => write!(f, "int"),
+            Type::Long => write!(f, "long"),
+            Type::FunType { params, ret } => {
+                write!(f, "FunType (")?;
+                for param in params {
+                    write!(f, "{:?} ", param)?;
+                }
+                write!(f, ") -> {:?}", ret)
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -347,14 +383,14 @@ impl fmt::Display for Declaration {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Exp {
-    Constant(Const, Span),
-    Var(Identifier, Span),
-    Cast(Type, Box<Exp>, Span),
-    Assignment(Box<Exp>, Box<Exp>, Span),
-    Unary(UnaryOperator, Box<Exp>, Span),
-    BinaryOperation(BinaryOperator, Box<Exp>, Box<Exp>, Span),
-    Conditional(Box<Exp>, Box<Exp>, Box<Exp>, Span),
-    FunctionCall(Identifier, Vec<Exp>, Span),
+    Constant(Const, Type, Span),
+    Var(Identifier, Type, Span),
+    Cast(Type, Box<Exp>, Type, Span),
+    Assignment(Box<Exp>, Box<Exp>, Type, Span),
+    Unary(UnaryOperator, Box<Exp>, Type, Span),
+    BinaryOperation(BinaryOperator, Box<Exp>, Box<Exp>, Type, Span),
+    Conditional(Box<Exp>, Box<Exp>, Box<Exp>, Type, Span),
+    FunctionCall(Identifier, Vec<Exp>, Type, Span),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -366,14 +402,40 @@ pub enum Const {
 impl Exp {
     pub fn span(&self) -> Span {
         match self {
-            Exp::Constant(_, span) => *span,
-            Exp::Cast(_, _, span) => *span,
-            Exp::Var(_, span) => *span,
-            Exp::Assignment(_exp, _exp1, span) => *span,
-            Exp::Unary(_unary_operator, _exp, span) => *span,
-            Exp::BinaryOperation(_binary_operator, _exp, _exp1, span) => *span,
-            Exp::Conditional(_exp, _exp1, _exp2, span) => *span,
-            Exp::FunctionCall(_identifier, _vec, span) => *span,
+            Exp::Constant(_, _typ, span) => *span,
+            Exp::Cast(_, _, _typ, span) => *span,
+            Exp::Var(_, _typ, span) => *span,
+            Exp::Assignment(_exp, _exp1, _typ, span) => *span,
+            Exp::Unary(_unary_operator, _exp, _typ, span) => *span,
+            Exp::BinaryOperation(_binary_operator, _exp, _exp1, _typ, span) => *span,
+            Exp::Conditional(_exp, _exp1, _exp2, _typ, span) => *span,
+            Exp::FunctionCall(_identifier, _vec, _typ, span) => *span,
+        }
+    }
+
+    pub fn typ(&self) -> Type {
+        match self {
+            Exp::Constant(_, typ, _) => typ.clone(),
+            Exp::Cast(_, _, typ, _) => typ.clone(),
+            Exp::Var(_, typ, _) => typ.clone(),
+            Exp::Assignment(_, _, typ, _) => typ.clone(),
+            Exp::Unary(_, _, typ, _) => typ.clone(),
+            Exp::BinaryOperation(_, _, _, typ, _) => typ.clone(),
+            Exp::Conditional(_, _, _, typ, _) => typ.clone(),
+            Exp::FunctionCall(_, _, typ, _) => typ.clone(),
+        }
+    }
+
+    pub fn set_type(&mut self, new_typ: Type) {
+        match self {
+            Exp::Constant(_, typ, _) => *typ = new_typ.clone(),
+            Exp::Cast(_, _, typ, _) => *typ = new_typ.clone(),
+            Exp::Var(_, typ, _) => *typ = new_typ.clone(),
+            Exp::Assignment(_, _, typ, _) => *typ = new_typ.clone(),
+            Exp::Unary(_, _, typ, _) => *typ = new_typ.clone(),
+            Exp::BinaryOperation(_, _, _, typ, _) => *typ = new_typ.clone(),
+            Exp::Conditional(_, _, _, typ, _) => *typ = new_typ.clone(),
+            Exp::FunctionCall(_, _, typ, _) => *typ = new_typ.clone(),
         }
     }
 }
@@ -597,7 +659,7 @@ impl<'a> Parser<'a> {
 
     pub fn parse_declaration(&mut self) -> miette::Result<Declaration> {
         let span_start = self.tokens[0].span.start;
-        let (_typ, storage_class) = self.parse_type_and_storage_classes()?;
+        let (typ, storage_class) = self.parse_type_and_storage_classes()?;
         let name = self.parse_identifier()?;
         if self.peek() == Some(TokenKind::OpenParen) {
             self.take_token();
@@ -635,7 +697,7 @@ impl<'a> Parser<'a> {
             Ok(Declaration::Var(
                 VarDecl {
                     name,
-                    typ: Type::Int,
+                    typ,
                     init,
                     storage_class,
                     span,
@@ -841,13 +903,17 @@ impl<'a> Parser<'a> {
         }
 
         match token.kind {
-            TokenKind::Long(_) => Ok(Some(Exp::Constant(Const::Long(v), token.span))),
+            TokenKind::Long(_) => Ok(Some(Exp::Constant(Const::Long(v), Type::Long, token.span))),
             TokenKind::Int(_) => {
                 // v <= (2 ^ 31) - 1 from book
                 if v < (2u64.pow(31) - 1) as i64 {
-                    Ok(Some(Exp::Constant(Const::Int(v as i32), token.span)))
+                    Ok(Some(Exp::Constant(
+                        Const::Int(v as i32),
+                        Type::Int,
+                        token.span,
+                    )))
                 } else {
-                    Ok(Some(Exp::Constant(Const::Long(v), token.span)))
+                    Ok(Some(Exp::Constant(Const::Long(v), Type::Long, token.span)))
                 }
             }
             _ => unreachable!(),
@@ -869,7 +935,7 @@ impl<'a> Parser<'a> {
             let operator = self.parse_unary_operator()?;
             let inner_exp = Box::new(self.parse_factor()?);
             let span = Span::new(span_start, inner_exp.span().end);
-            Ok(Exp::Unary(operator, inner_exp, span))
+            Ok(Exp::Unary(operator, inner_exp, Type::Undefined, span))
         } else if next_token == Some(TokenKind::OpenParen) {
             self.take_token(); // skips OpenParen
             if let Some(token) = self.peek() {
@@ -879,6 +945,7 @@ impl<'a> Parser<'a> {
                     return Ok(Exp::Cast(
                         typ,
                         Box::new(self.parse_exp(None)?),
+                        Type::Undefined,
                         Span::empty(),
                     ));
                 }
@@ -893,10 +960,11 @@ impl<'a> Parser<'a> {
                 let args = self.parse_arg_list()?;
                 let span = Span::new(span_start, self.tokens[0].span.end);
                 self.expect(TokenKind::CloseParen, "function call")?;
-                Ok(Exp::FunctionCall(identifier, args, span))
+                Ok(Exp::FunctionCall(identifier, args, Type::Undefined, span))
             } else {
                 Ok(Exp::Var(
                     identifier.clone(),
+                    Type::Undefined,
                     identifier.clone().span().unwrap_or(Span::empty()),
                 ))
             }
@@ -937,7 +1005,7 @@ impl<'a> Parser<'a> {
                 self.take_token();
                 let right = self.parse_exp(Some(precedence(&next_token)))?;
                 let span = Span::new(span_start, right.span().end);
-                left = Exp::Assignment(Box::new(left), Box::new(right), span);
+                left = Exp::Assignment(Box::new(left), Box::new(right), Type::Undefined, span);
             } else if next_token == TokenKind::QuestionMark {
                 self.take_token();
                 let true_exp = self.parse_exp(None)?;
@@ -948,6 +1016,7 @@ impl<'a> Parser<'a> {
                     Box::new(left),
                     Box::new(true_exp),
                     Box::new(false_exp),
+                    Type::Undefined,
                     span,
                 );
             } else {
@@ -958,8 +1027,13 @@ impl<'a> Parser<'a> {
                 // let oper_prec = operator.precedence();
                 let right = self.parse_exp(Some(next_prec + 1))?;
                 let span = Span::new(span_start, right.span().end);
-                left =
-                    Exp::BinaryOperation(operator, Box::new(left), Box::new(right.clone()), span);
+                left = Exp::BinaryOperation(
+                    operator,
+                    Box::new(left),
+                    Box::new(right.clone()),
+                    Type::Undefined,
+                    span,
+                );
             }
         }
         Ok(left)

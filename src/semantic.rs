@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use loop_labeling::label_loops;
 use type_check::typecheck_program;
-pub use type_check::{InitialValue, SymbolMap, TypeInfo, VarAttrs};
+pub use type_check::{InitialValue, StaticInit, SymbolMap, TypeInfo, VarAttrs};
 
 use crate::{
     lexer::Span,
@@ -24,10 +24,10 @@ impl Analysis {
         Self { program }
     }
 
-    pub fn run(&mut self) -> miette::Result<(SymbolMap, Program)> {
+    pub fn run(&mut self, source: &str) -> miette::Result<(SymbolMap, Program)> {
         let program = self.resolve_program()?;
         let program = label_loops(&program)?;
-        let symbols = typecheck_program(&program)?;
+        let (program, symbols) = typecheck_program(source, program)?;
         Ok((symbols, program))
     }
 
@@ -493,41 +493,47 @@ fn resolve_var_declaration(
 
 fn resolve_exp(identifier_map: &IdentifierMap, exp: &Exp) -> miette::Result<Exp> {
     match exp {
-        Exp::Assignment(left, right, span) => {
+        Exp::Assignment(left, right, typ, span) => {
             let left = resolve_exp(identifier_map, left.as_ref())?;
             let right = resolve_exp(identifier_map, right.as_ref())?;
-            let Exp::Var(_, _) = left else {
+            let Exp::Var(_, _, _) = left else {
                 miette::bail!(
                     "Invalid assignment target. Expected variable, found {:?}",
                     left
                 );
             };
-            Ok(Exp::Assignment(Box::new(left), Box::new(right), *span))
+            Ok(Exp::Assignment(
+                Box::new(left),
+                Box::new(right),
+                typ.clone(),
+                *span,
+            ))
         }
-        Exp::Var(name, span) => {
+        Exp::Var(name, typ, span) => {
             if let Some(info) = identifier_map.get(name) {
-                Ok(Exp::Var(info.name.clone(), *span))
+                Ok(Exp::Var(info.name.clone(), typ.clone(), *span))
             } else {
                 miette::bail!("Variable {} not declared", name);
             }
         }
         // Exp::Factor(factor) => Ok(Exp::Factor(self.resolve_factor(context, factor)?)),
-        Exp::Constant(_, _) => Ok(exp.clone()),
-        Exp::Unary(op, exp, span) => {
+        Exp::Constant(_, _, _) => Ok(exp.clone()),
+        Exp::Unary(op, exp, typ, span) => {
             let factor = resolve_exp(identifier_map, exp.as_ref())?;
-            Ok(Exp::Unary(op.clone(), Box::new(factor), *span))
+            Ok(Exp::Unary(op.clone(), Box::new(factor), typ.clone(), *span))
         }
-        Exp::BinaryOperation(op, left, right, span) => {
+        Exp::BinaryOperation(op, left, right, typ, span) => {
             let left = resolve_exp(identifier_map, left.as_ref())?;
             let right = resolve_exp(identifier_map, right.as_ref())?;
             Ok(Exp::BinaryOperation(
                 *op,
                 Box::new(left),
                 Box::new(right),
+                typ.clone(),
                 *span,
             ))
         }
-        Exp::Conditional(cond, then, else_, span) => {
+        Exp::Conditional(cond, then, else_, typ, span) => {
             let cond = resolve_exp(identifier_map, cond.as_ref())?;
             let then = resolve_exp(identifier_map, then.as_ref())?;
             let else_ = resolve_exp(identifier_map, else_.as_ref())?;
@@ -536,10 +542,11 @@ fn resolve_exp(identifier_map: &IdentifierMap, exp: &Exp) -> miette::Result<Exp>
                 Box::new(cond),
                 Box::new(then),
                 Box::new(else_),
+                typ.clone(),
                 *span,
             ))
         }
-        Exp::FunctionCall(fun_name, args, span) => {
+        Exp::FunctionCall(fun_name, args, typ, span) => {
             // page 175, listing 9-18
             if let Some(identifier_info) = identifier_map.get(fun_name) {
                 let new_args = args
@@ -549,6 +556,7 @@ fn resolve_exp(identifier_map: &IdentifierMap, exp: &Exp) -> miette::Result<Exp>
                 Ok(Exp::FunctionCall(
                     identifier_info.name.clone(),
                     new_args,
+                    typ.clone(),
                     *span,
                 ))
             } else {
@@ -556,7 +564,15 @@ fn resolve_exp(identifier_map: &IdentifierMap, exp: &Exp) -> miette::Result<Exp>
                 miette::bail!("Undeclared function {fun_name}");
             }
         }
-        Exp::Cast(_, _exp, _span) => todo!(),
+        Exp::Cast(target_type, exp, typ, span) => {
+            let exp = resolve_exp(identifier_map, exp.as_ref())?;
+            Ok(Exp::Cast(
+                target_type.clone(),
+                Box::new(exp),
+                typ.clone(),
+                *span,
+            ))
+        }
     }
 }
 

@@ -47,6 +47,12 @@ impl Span {
     }
 }
 
+impl From<Span> for SourceSpan {
+    fn from(span: Span) -> SourceSpan {
+        SourceSpan::new(SourceOffset::from(span.start), span.len())
+    }
+}
+
 impl From<&Token<'_>> for SourceSpan {
     fn from(token: &Token<'_>) -> SourceSpan {
         SourceSpan::new(SourceOffset::from(token.span.start), token.span.len())
