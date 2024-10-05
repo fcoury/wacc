@@ -138,6 +138,7 @@ pub struct FunctionDecl {
     pub params: Vec<VarDecl>,
     pub body: Option<Block>,
     pub storage_class: Option<StorageClass>,
+    pub span: Span,
 }
 
 impl fmt::Display for FunctionDecl {
@@ -682,6 +683,7 @@ impl<'a> Parser<'a> {
                     params,
                     body,
                     storage_class,
+                    span,
                 },
                 span,
             ))

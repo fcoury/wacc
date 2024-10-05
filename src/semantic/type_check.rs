@@ -186,10 +186,10 @@ fn typecheck_block(source: &str, symbols: &mut SymbolMap, block: Block) -> miett
     for block_item in block.items.into_iter() {
         let new_block_item = match block_item {
             BlockItem::Declaration(declaration, span) => match declaration {
-                Declaration::Function(fun, fun_span) => {
+                Declaration::Function(fun_decl, fun_span) => {
                     let fun_decl = typecheck_function_declaration(
                         source,
-                        fun.clone(),
+                        fun_decl.clone(),
                         symbols,
                         CalleeScope::Block,
                     )?;
@@ -435,7 +435,7 @@ fn typecheck_file_scope_variable_declaration(
 // modified:
 //      page 230, listing 10-26
 fn typecheck_function_declaration(
-    src: &str,
+    source: &str,
     decl: FunctionDecl,
     symbols: &mut SymbolMap,
     callee_scope: CalleeScope,
@@ -462,11 +462,26 @@ fn typecheck_function_declaration(
             if params.len() != decl.params.len() {
                 let plural = if params.len() == 1 { "" } else { "s" };
                 miette::bail!(
-                "Function {} already declared with {} parameter{plural}, new declaration found with {}",
-                decl.name,
-                params.len(),
-                decl.params.len()
-            );
+                    "Function {} already declared with {} parameter{plural}, new declaration found with {}",
+                    decl.name,
+                    params.len(),
+                    decl.params.len()
+                );
+            }
+
+            for param in params.iter().zip(decl.params.iter()) {
+                if param.0.typ != param.1.typ {
+                    return Err(miette::miette! {
+                        labels = vec![
+                            LabeledSpan::at(decl.span, "here"),
+                        ],
+                            "Function {} already declared with parameter of type {}, new declaration found with {}",
+                            decl.name,
+                            param.0.typ,
+                            param.1.typ
+                    }
+                    .with_source_code(source.to_string()));
+                }
             }
 
             already_defined = attrs.defined;
@@ -518,7 +533,7 @@ fn typecheck_function_declaration(
             symbols.inside_function = true;
 
             // let mut symbols = symbols.with_new_scope(true);
-            let block = typecheck_block(src, symbols, body)?;
+            let block = typecheck_block(source, symbols, body)?;
 
             symbols.inside_function = old_inside_function;
             symbols.exit_block_scope();
@@ -532,6 +547,7 @@ fn typecheck_function_declaration(
         params: decl.params,
         body,
         storage_class: decl.storage_class,
+        span: decl.span,
     })
 }
 

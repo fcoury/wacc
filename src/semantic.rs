@@ -310,6 +310,7 @@ impl Analysis {
             params: new_params,
             body: new_body,
             storage_class: decl.storage_class.clone(),
+            span: decl.span,
         })
     }
 
@@ -342,7 +343,7 @@ impl Analysis {
                 let declaration = Declaration::Var(
                     VarDecl {
                         name: declaration.name.clone(),
-                        typ: Type::Int,
+                        typ: declaration.typ.clone(),
                         init: match &declaration.init {
                             Some(exp) => Some(resolve_exp(identifier_map, exp)?),
                             None => None,
@@ -451,7 +452,7 @@ fn resolve_param(
 
     Ok(VarDecl {
         name: unique_name,
-        typ: Type::Int,
+        typ: param.typ.clone(),
         init: None,
         storage_class: param.storage_class.clone(),
         span: Span::empty(),
@@ -484,7 +485,7 @@ fn resolve_var_declaration(
 
     Ok(VarDecl {
         name: unique_name,
-        typ: Type::Int,
+        typ: declaration.typ.clone(),
         init,
         storage_class: declaration.storage_class.clone(),
         span: declaration.span,
