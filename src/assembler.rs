@@ -49,7 +49,7 @@ impl From<ir::StaticVar> for StaticVar {
         StaticVar {
             name: value.name,
             global: value.global,
-            init: value.init.into(),
+            init: todo!(), // init: value.init.into(),
         }
     }
 }
@@ -744,6 +744,8 @@ fn from(instruction: ir::Instruction, context: &ir::Function) -> Vec<Instruction
             instructions.push(Instruction::Mov(Operand::Reg(Reg::AX), dst.into()));
             instructions
         }
+        ir::Instruction::SignExtend(val, val1, span) => todo!(),
+        ir::Instruction::Truncate(val, val1, span) => todo!(),
     }
 }
 
@@ -939,7 +941,7 @@ impl Display for Operand {
 impl From<ir::Val> for Operand {
     fn from(val: ir::Val) -> Self {
         match val {
-            ir::Val::Constant(value, _span) => Operand::Imm(value),
+            ir::Val::Constant(value, _span) => todo!(), // Operand::Imm(value),
             ir::Val::Var(identifier, _span) => Operand::Pseudo(identifier),
         }
     }

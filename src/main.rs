@@ -80,6 +80,7 @@ fn compile(input_file: &Path, args: &Args) -> miette::Result<()> {
         exit(1);
     });
 
+    // lexing
     let mut lexer = Lexer::new(&input);
     let tokens = lexer.run().context("Failed to lex file")?;
     std::fs::remove_file(input_file)
@@ -94,6 +95,7 @@ fn compile(input_file: &Path, args: &Args) -> miette::Result<()> {
         return Ok(());
     }
 
+    // parsing
     let mut parser = crate::parser::Parser::new(&input, &tokens);
     let ast = parser.run()?;
     println!("\nAST:");
@@ -105,6 +107,7 @@ fn compile(input_file: &Path, args: &Args) -> miette::Result<()> {
         return Ok(());
     }
 
+    // static analysis
     let mut analysis = semantic::Analysis::new(ast);
     let (symbols, ast) = analysis
         .run(&input)
@@ -125,7 +128,8 @@ fn compile(input_file: &Path, args: &Args) -> miette::Result<()> {
         return Ok(());
     }
 
-    let tacky = ir::Ir::new(ast).run(&symbols)?;
+    // ir (aka tacky) generation
+    let (tacky, symbols) = ir::Ir::new(ast).run(symbols)?;
     println!("\nTacky:");
     for instr in tacky.iter() {
         println!("{:?}", instr);

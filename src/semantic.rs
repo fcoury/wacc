@@ -3,13 +3,13 @@ use std::collections::HashMap;
 use loop_labeling::label_loops;
 use miette::LabeledSpan;
 use type_check::typecheck_program;
-pub use type_check::{InitialValue, StaticInit, SymbolMap, TypeInfo, VarAttrs};
+pub use type_check::{InitialValue, StaticInit, SymbolMap, TypeInfo, VarAttrs, VariableInfo};
 
 use crate::{
     lexer::Span,
     parser::{
         Block, BlockItem, Declaration, Exp, ForInit, FunctionDecl, Identifier, Program, Statement,
-        StorageClass, Type, VarDecl,
+        StorageClass, VarDecl,
     },
 };
 

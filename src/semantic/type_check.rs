@@ -81,7 +81,7 @@ impl SymbolMap {
         self.declarations.get(key)
     }
 
-    fn insert(&mut self, key: Identifier, value: TypeInfo) {
+    pub fn insert(&mut self, key: Identifier, value: TypeInfo) {
         self.declarations.insert(
             key,
             ScopeInfo {
@@ -93,6 +93,16 @@ impl SymbolMap {
 
     pub fn iter(&self) -> impl Iterator<Item = (&Identifier, &ScopeInfo)> {
         self.declarations.iter()
+    }
+
+    pub fn add_local(&mut self, var_name: Identifier, target_type: &Type) {
+        self.insert(
+            var_name.clone(),
+            TypeInfo::Variable(VariableInfo {
+                typ: target_type.clone(),
+                attrs: VarAttrs::Local,
+            }),
+        );
     }
 }
 
