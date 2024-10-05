@@ -556,6 +556,7 @@ fn resolve_exp(identifier_map: &IdentifierMap, exp: &Exp) -> miette::Result<Exp>
                 miette::bail!("Undeclared function {fun_name}");
             }
         }
+        Exp::Cast(_, _exp, _span) => todo!(),
     }
 }
 

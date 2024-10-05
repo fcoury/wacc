@@ -427,8 +427,9 @@ pub fn emit_ir(
             parser::Exp::BinaryOperation(_, _, _, _) => todo!(),
             parser::Exp::Conditional(_, _, _, _) => todo!(),
             parser::Exp::FunctionCall(_, _, _) => todo!(),
+            parser::Exp::Cast(_, _exp, _span) => todo!(),
         },
-        parser::Exp::Constant(value, span) => Val::Constant(value, Some(span)),
+        parser::Exp::Constant(_value, _span) => todo!(), // Val::Constant(value, Some(span)),
         parser::Exp::Unary(operator, exp, span) => {
             let src = emit_ir(*exp, instructions, context);
             let dst = Val::Var(context.next_var(), None);
@@ -604,6 +605,7 @@ pub fn emit_ir(
 
             Val::Var(result, None)
         }
+        parser::Exp::Cast(_, _exp, _span) => todo!(),
     }
 }
 

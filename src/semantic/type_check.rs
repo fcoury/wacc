@@ -200,8 +200,8 @@ fn typecheck_local_variable_declaration(
             }
         }
         Some(StorageClass::Static) => {
-            let initial_value = match decl.init {
-                Some(Exp::Constant(i, _)) => InitialValue::Initial(i),
+            let initial_value = match &decl.init {
+                Some(Exp::Constant(_i, _)) => todo!(), // InitialValue::Initial(i),
                 None => InitialValue::Initial(0),
                 _ => {
                     miette::bail!(
@@ -245,8 +245,8 @@ fn typecheck_file_scope_variable_declaration(
     decl: &VarDecl,
     symbols: &mut SymbolMap,
 ) -> miette::Result<()> {
-    let mut initial_value = match decl.init {
-        Some(Exp::Constant(i, _)) => InitialValue::Initial(i),
+    let mut initial_value = match &decl.init {
+        Some(Exp::Constant(i, _)) => todo!(), //InitialValue::Initial(i),
         None => match decl.storage_class {
             Some(StorageClass::Extern) => InitialValue::NoInitializer,
             _ => InitialValue::Tentative,

@@ -86,7 +86,8 @@ impl fmt::Display for Identifier {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
     Int,
-    FunType(i32),
+    Long,
+    FunType { params: Vec<Type>, ret: Box<Type> },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -346,8 +347,9 @@ impl fmt::Display for Declaration {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Exp {
-    Constant(i32, Span),
+    Constant(Const, Span),
     Var(Identifier, Span),
+    Cast(Type, Box<Exp>, Span),
     Assignment(Box<Exp>, Box<Exp>, Span),
     Unary(UnaryOperator, Box<Exp>, Span),
     BinaryOperation(BinaryOperator, Box<Exp>, Box<Exp>, Span),
@@ -355,10 +357,17 @@ pub enum Exp {
     FunctionCall(Identifier, Vec<Exp>, Span),
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum Const {
+    Int(i32),
+    Long(i64),
+}
+
 impl Exp {
     pub fn span(&self) -> Span {
         match self {
             Exp::Constant(_, span) => *span,
+            Exp::Cast(_, _, span) => *span,
             Exp::Var(_, span) => *span,
             Exp::Assignment(_exp, _exp1, span) => *span,
             Exp::Unary(_unary_operator, _exp, span) => *span,
@@ -466,6 +475,9 @@ impl<'a> Parser<'a> {
             if self.peek() == Some(TokenKind::IntKeyword) {
                 types.push(Type::Int);
                 self.take_token();
+            } else if self.peek() == Some(TokenKind::LongKeyword) {
+                types.push(Type::Long);
+                self.take_token();
             } else if self.peek() == Some(TokenKind::Static) {
                 self.take_token();
                 storage_classes.push(StorageClass::Static);
@@ -476,6 +488,8 @@ impl<'a> Parser<'a> {
                 break;
             }
         }
+
+        let resolved_type = self.parse_type(&types)?;
 
         if types.len() > 1 {
             bail!(self, "Multiple type specifiers are not allowed");
@@ -489,7 +503,29 @@ impl<'a> Parser<'a> {
             bail!(self, "Multiple storage classes are not allowed");
         }
 
-        Ok((types[0].clone(), storage_classes.pop()))
+        Ok((resolved_type, storage_classes.pop()))
+    }
+
+    fn parse_type(&self, types: &[Type]) -> miette::Result<Type> {
+        let resolved_type = match types {
+            [Type::Int] => Type::Int,
+            [Type::Int, Type::Long] | [Type::Long, Type::Int] | [Type::Long] => Type::Long,
+            _ => miette::bail!("Invalid type specifier: {:?}", types),
+        };
+
+        Ok(resolved_type)
+    }
+
+    fn parse_type_specifier(&mut self) -> miette::Result<Type> {
+        if self.peek() == Some(TokenKind::IntKeyword) {
+            self.take_token();
+            Ok(Type::Int)
+        } else if self.peek() == Some(TokenKind::LongKeyword) {
+            self.take_token();
+            Ok(Type::Long)
+        } else {
+            bail!(self, "Expected type specifier");
+        }
     }
 
     pub fn parse_param_list(&mut self) -> miette::Result<Vec<VarDecl>> {
@@ -497,21 +533,23 @@ impl<'a> Parser<'a> {
         let mut params = vec![];
         if self.peek() == Some(TokenKind::Void) {
             self.take_token();
-        } else if self.peek() == Some(TokenKind::IntKeyword) {
-            loop {
-                self.expect(TokenKind::IntKeyword, "parameter")?;
-                let name = self.parse_identifier()?;
-                params.push(VarDecl {
-                    name,
-                    typ: Type::Int,
-                    init: None,
-                    storage_class: None,
-                    span: Span::new(span_start, self.tokens[0].span.start),
-                });
-                if self.peek() != Some(TokenKind::Comma) {
-                    break;
+        } else if let Some(token) = self.peek() {
+            if token.is_type_specifier() {
+                loop {
+                    let typ = self.parse_type_specifier()?;
+                    let name = self.parse_identifier()?;
+                    params.push(VarDecl {
+                        name,
+                        typ,
+                        init: None,
+                        storage_class: None,
+                        span: Span::new(span_start, self.tokens[0].span.start),
+                    });
+                    if self.peek() != Some(TokenKind::Comma) {
+                        break;
+                    }
+                    self.take_token(); // skips Comma
                 }
-                self.take_token(); // skips Comma
             }
         }
         Ok(params)
@@ -724,6 +762,7 @@ impl<'a> Parser<'a> {
         };
 
         next_token == TokenKind::IntKeyword
+            || next_token == TokenKind::LongKeyword
             || next_token == TokenKind::Static
             || next_token == TokenKind::Extern
     }
@@ -765,14 +804,53 @@ impl<'a> Parser<'a> {
         }
     }
 
+    pub fn parse_const(&mut self) -> miette::Result<Option<Exp>> {
+        let token = self.tokens[0].clone();
+
+        if !matches!(token.kind, TokenKind::Int(_) | TokenKind::Long(_)) {
+            println!("Not a constant: {:?}", token);
+            return Ok(None);
+        }
+
+        self.take_token(); // consume type token
+
+        // parse value of the token as int
+        println!("token: {:?}", token);
+        let token_val = token.origin.strip_suffix("l").unwrap_or(token.origin);
+        let v = match token_val.parse::<i64>() {
+            Ok(v) => v,
+            Err(e) => {
+                miette::bail!("Error parsing '{}' as a long value: {e}", token.origin);
+            }
+        };
+
+        if v > (2u64.pow(63) - 1) as i64 {
+            miette::bail!("Constant {} is too large to represent as a long value", v);
+        }
+
+        match token.kind {
+            TokenKind::Long(_) => Ok(Some(Exp::Constant(Const::Long(v), token.span))),
+            TokenKind::Int(_) => {
+                // v <= (2 ^ 31) - 1 from book
+                if v < (2u64.pow(31) - 1) as i64 {
+                    Ok(Some(Exp::Constant(Const::Int(v as i32), token.span)))
+                } else {
+                    Ok(Some(Exp::Constant(Const::Long(v), token.span)))
+                }
+            }
+            _ => unreachable!(),
+        }
+    }
+
     pub fn parse_factor(&mut self) -> miette::Result<Exp> {
+        if let Some(constant) = self.parse_const()? {
+            return Ok(constant);
+        }
+
         let span_start = self.tokens[0].span.start;
         let next_token = self.peek();
-        if let TokenKind::Int(val) = self.tokens[0].kind {
-            let span = Span::new(span_start, self.tokens[0].span.end);
-            self.tokens = &self.tokens[1..];
-            Ok(Exp::Constant(val, span))
-        } else if next_token == Some(TokenKind::Tilde)
+
+        if next_token == Some(TokenKind::Tilde)
             || next_token == Some(TokenKind::Hyphen)
             || next_token == Some(TokenKind::Exclamation)
         {
@@ -1176,5 +1254,16 @@ mod tests {
         println!("{:?}", ast);
 
         // assert_eq!(ast, expected);
+    }
+
+    #[test]
+    fn parse_long() {
+        let input = r#"int main(void) { long a = 10l; }"#;
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.run().unwrap();
+        let mut parser = Parser::new(input, &tokens);
+        let ast = parser.run().unwrap();
+
+        println!("{:?}", ast);
     }
 }

@@ -58,6 +58,7 @@ impl From<&Token<'_>> for SourceSpan {
 pub enum TokenKind {
     // keywords come first
     IntKeyword,
+    LongKeyword,
     Void,
     Return,
     If,
@@ -106,7 +107,8 @@ pub enum TokenKind {
 
     // then identifiers and constants
     Identifier(String),
-    Int(i32),
+    Int(String),
+    Long(String),
 
     // others
     Eof,
@@ -117,7 +119,9 @@ impl TokenKind {
         match self {
             TokenKind::Identifier(_) => Some(Regex::new(r"^[a-zA-Z_]\w*\b").unwrap()),
             TokenKind::Int(_) => Some(Regex::new(r"^[0-9]+\b").unwrap()),
+            TokenKind::Long(_) => Some(Regex::new(r"^[0-9]+[Ll]\b").unwrap()),
             TokenKind::IntKeyword => Some(Regex::new(r"^int\b").unwrap()),
+            TokenKind::LongKeyword => Some(Regex::new(r"^long\b").unwrap()),
             TokenKind::Void => Some(Regex::new(r"^void\b").unwrap()),
             TokenKind::Return => Some(Regex::new(r"^return\b").unwrap()),
             TokenKind::If => Some(Regex::new(r"^if\b").unwrap()),
@@ -162,6 +166,10 @@ impl TokenKind {
             _ => None,
         }
     }
+
+    pub fn is_type_specifier(&self) -> bool {
+        *self == TokenKind::IntKeyword || *self == TokenKind::LongKeyword
+    }
 }
 
 pub struct Lexer<'a> {
@@ -197,7 +205,8 @@ impl<'a> Lexer<'a> {
                             TokenKind::Identifier(_) => {
                                 TokenKind::Identifier(token_str.to_string())
                             }
-                            TokenKind::Int(_) => TokenKind::Int(token_str.parse().unwrap()),
+                            TokenKind::Int(_) => TokenKind::Int(token_str.to_string()),
+                            TokenKind::Long(_) => TokenKind::Int(token_str.to_string()),
                             typ => typ,
                         };
                         // println!("Token: {} => {:?}", token_str, token);
@@ -243,5 +252,21 @@ impl<'a> Lexer<'a> {
             }
             self.pos += 1;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_long() {
+        let input = "10l";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.run().unwrap();
+        assert_eq!(
+            tokens.first().unwrap().kind,
+            TokenKind::Long("10l".to_string())
+        );
     }
 }
