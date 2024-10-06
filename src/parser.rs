@@ -383,6 +383,28 @@ impl fmt::Display for Declaration {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum Const {
+    Int(i32),
+    Long(i64),
+}
+
+impl Const {
+    pub fn typ(&self) -> Type {
+        match self {
+            Const::Int(_) => Type::Int,
+            Const::Long(_) => Type::Long,
+        }
+    }
+
+    pub fn value(&self) -> i64 {
+        match self {
+            Const::Int(val) => *val as i64,
+            Const::Long(val) => *val,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Exp {
     Constant(Const, Type, Span),
     Var(Identifier, Type, Span),
@@ -392,12 +414,6 @@ pub enum Exp {
     BinaryOperation(BinaryOperator, Box<Exp>, Box<Exp>, Type, Span),
     Conditional(Box<Exp>, Box<Exp>, Box<Exp>, Type, Span),
     FunctionCall(Identifier, Vec<Exp>, Type, Span),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum Const {
-    Int(i32),
-    Long(i64),
 }
 
 impl Exp {

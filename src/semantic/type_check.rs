@@ -21,6 +21,13 @@ impl ScopeInfo {
             _ => None,
         }
     }
+
+    pub fn typ(&self) -> Type {
+        match &self.info {
+            TypeInfo::Function(_) => todo!(),
+            TypeInfo::Variable(info) => info.typ.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use loop_labeling::label_loops;
 use miette::LabeledSpan;
 use type_check::typecheck_program;
-pub use type_check::{InitialValue, StaticInit, SymbolMap, TypeInfo, VarAttrs, VariableInfo};
+pub use type_check::{InitialValue, StaticInit, SymbolMap, TypeInfo, VarAttrs};
 
 use crate::{
     lexer::Span,

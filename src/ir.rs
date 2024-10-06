@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicI32, Ordering};
 use crate::{
     lexer::Span,
     parser::{self, BlockItem, Const, Identifier, Type},
-    semantic::{InitialValue, StaticInit, SymbolMap, TypeInfo, VarAttrs, VariableInfo},
+    semantic::{InitialValue, StaticInit, SymbolMap, TypeInfo, VarAttrs},
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -46,6 +46,16 @@ pub struct StaticVar {
     pub global: bool,
     pub typ: Type,
     pub init: StaticInit,
+}
+
+impl StaticVar {
+    pub fn alignment(&self) -> i32 {
+        match &self.typ {
+            Type::Int => 4,
+            Type::Long => 8,
+            t => unimplemented!("alignment for type {:?}", t),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -432,6 +442,19 @@ impl Val {
         match self {
             Val::Constant(_, span) => *span,
             Val::Var(_, span) => *span,
+        }
+    }
+
+    pub fn get_type(&self, symbols: &SymbolMap) -> miette::Result<Type> {
+        match self {
+            Val::Constant(c, _) => Ok(c.typ()),
+            Val::Var(name, _) => symbols
+                .get(name)
+                .map(|info| info.typ())
+                .ok_or(miette::miette!(
+                    "Variable {:?} not found in symbol table",
+                    name,
+                )),
         }
     }
 }
