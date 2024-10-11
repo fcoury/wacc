@@ -740,12 +740,20 @@ fn convert_to(e: Exp, t: &Type) -> Exp {
 fn typecheck_exp(source: &str, symbols: &SymbolMap, exp: Exp) -> miette::Result<Exp> {
     match exp {
         Exp::Var(name, _, span) => match symbols.get(&name).map(|x| &x.info) {
-            None => {
-                miette::bail!("Variable {} not declared", name);
+            None => Err(miette::miette! {
+                labels = vec![
+                    LabeledSpan::at(span, "here"),
+                ],
+                "variable {} not declared", name
             }
-            Some(TypeInfo::Function { .. }) => {
-                miette::bail!("{} is a function, not a variable", name)
+            .with_source_code(source.to_string())),
+            Some(TypeInfo::Function { .. }) => Err(miette::miette! {
+                labels = vec![
+                    LabeledSpan::at(span, "here"),
+                ],
+                "{} is a function, not a variable", name
             }
+            .with_source_code(source.to_string())),
             Some(TypeInfo::Variable(variable_info)) => {
                 Ok(Exp::Var(name, variable_info.typ.clone(), span))
             }
@@ -845,20 +853,32 @@ fn typecheck_exp(source: &str, symbols: &SymbolMap, exp: Exp) -> miette::Result<
         Exp::FunctionCall(name, args, typ, span) => {
             let f_type = symbols.get(&name).map(|x| &x.info);
             match f_type {
-                None => {
-                    miette::bail!("Function {} not declared", name);
+                None => Err(miette::miette! {
+                    labels = vec![
+                        LabeledSpan::at(span, "here"),
+                    ],
+                "Function {} not declared", name
                 }
-                Some(TypeInfo::Variable { .. }) => {
-                    miette::bail!("{} is a variable, not a function", name)
+                .with_source_code(source.to_string())),
+                Some(TypeInfo::Variable { .. }) => Err(miette::miette! {
+                    labels = vec![
+                        LabeledSpan::at(span, "here"),
+                    ],
+                    "{} is a variable, not a function", name
                 }
+                .with_source_code(source.to_string())),
                 Some(TypeInfo::Function(FunctionInfo { params, .. })) => {
                     if params.len() != args.len() {
-                        miette::bail!(
-                            "Function {} expects {} arguments, found {}",
-                            name,
-                            params.len(),
-                            args.len()
-                        );
+                        return Err(miette::miette! {
+                            labels = vec![
+                                LabeledSpan::at(span, "here"),
+                            ],
+                                    "Function {} expects {} arguments, found {}",
+                                    name,
+                                    params.len(),
+                                    args.len()
+                        }
+                        .with_source_code(source.to_string()));
                     }
 
                     let mut converted_args = Vec::new();

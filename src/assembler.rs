@@ -247,7 +247,7 @@ impl Function {
         }
 
         for (i, param) in function.params.iter().enumerate() {
-            let Some(scope_info) = symbols.get(param) else {
+            let Some(scope_info) = symbols.get(&param) else {
                 miette::bail!("Parameter not found: {:?}", param);
             };
 
@@ -1193,9 +1193,14 @@ impl<'a> Assembler<'a> {
                             );
                         };
 
-                        // TODO: alignment?
-                        *stack_offset -= assembly_type.size();
+                        let alignment = assembly_type.size();
+                        let misalignment = stack_offset.abs() % alignment;
+                        if misalignment != 0 {
+                            *stack_offset -= alignment - misalignment;
+                        }
+                        *stack_offset -= alignment;
                         stack_map.insert(pseudo, *stack_offset);
+
                         Operand::Stack(*stack_offset)
                     }
                 }
@@ -1396,87 +1401,122 @@ impl<'a> Assembler<'a> {
                             vec![Instruction::Movsx(src, dst)]
                         }
                     }
-                    Instruction::Mov(asm_type, src, dst) => match (src, dst) {
-                        (Operand::Stack(src), Operand::Stack(dst)) => {
-                            vec![
-                                Instruction::Mov(
-                                    asm_type,
-                                    Operand::Stack(src),
-                                    Operand::Reg(Reg::R10),
-                                ),
-                                Instruction::Mov(
-                                    asm_type,
-                                    Operand::Reg(Reg::R10),
-                                    Operand::Stack(dst),
-                                ),
-                            ]
+                    Instruction::Mov(asm_type, src, dst) => {
+                        // The movq instruction can move these very large immediate values into
+                        // registers, but not directly into memory, so
+                        //
+                        //    Mov(Quadword, Imm(4294967295), Stack(-16))
+                        //
+                        // should be rewritten as:
+                        //
+                        //    Mov(Quadword, Imm(4294967295), Reg(R10))
+                        //    Mov(Quadword, Reg(R10), Stack(-16))
+                        match (src, dst) {
+                            (Operand::Stack(src), Operand::Stack(dst)) => {
+                                vec![
+                                    Instruction::Mov(
+                                        asm_type,
+                                        Operand::Stack(src),
+                                        Operand::Reg(Reg::R10),
+                                    ),
+                                    Instruction::Mov(
+                                        asm_type,
+                                        Operand::Reg(Reg::R10),
+                                        Operand::Stack(dst),
+                                    ),
+                                ]
+                            }
+                            (Operand::Data(src), Operand::Stack(dst)) => {
+                                vec![
+                                    Instruction::Mov(
+                                        asm_type,
+                                        Operand::Data(src),
+                                        Operand::Reg(Reg::R10),
+                                    ),
+                                    Instruction::Mov(
+                                        asm_type,
+                                        Operand::Reg(Reg::R10),
+                                        Operand::Stack(dst),
+                                    ),
+                                ]
+                            }
+                            (Operand::Stack(src), Operand::Data(dst)) => {
+                                vec![
+                                    Instruction::Mov(
+                                        asm_type,
+                                        Operand::Stack(src),
+                                        Operand::Reg(Reg::R10),
+                                    ),
+                                    Instruction::Mov(
+                                        asm_type,
+                                        Operand::Reg(Reg::R10),
+                                        Operand::Data(dst),
+                                    ),
+                                ]
+                            }
+                            (src, dst) => vec![Instruction::Mov(asm_type, src, dst)],
                         }
-                        (Operand::Data(src), Operand::Stack(dst)) => {
-                            vec![
-                                Instruction::Mov(
-                                    asm_type,
-                                    Operand::Data(src),
-                                    Operand::Reg(Reg::R10),
-                                ),
-                                Instruction::Mov(
-                                    asm_type,
-                                    Operand::Reg(Reg::R10),
-                                    Operand::Stack(dst),
-                                ),
-                            ]
-                        }
-                        (Operand::Stack(src), Operand::Data(dst)) => {
-                            vec![
-                                Instruction::Mov(
-                                    asm_type,
-                                    Operand::Stack(src),
-                                    Operand::Reg(Reg::R10),
-                                ),
-                                Instruction::Mov(
-                                    asm_type,
-                                    Operand::Reg(Reg::R10),
-                                    Operand::Data(dst),
-                                ),
-                            ]
-                        }
-                        (src, dst) => vec![Instruction::Mov(asm_type, src, dst)],
-                    },
+                    }
                     Instruction::Idiv(asm_type, operand) => vec![
                         Instruction::Mov(asm_type, operand, Operand::Reg(Reg::R10)),
                         Instruction::Idiv(asm_type, Operand::Reg(Reg::R10)),
                     ],
-                    Instruction::Binary(op, asm_type, src1, src2) => match (&op, src1, src2) {
-                        (BinaryOperator::Add, src1, src2)
-                        | (BinaryOperator::Sub, src1, src2)
-                        | (BinaryOperator::ShiftLeft, src1, src2)
-                        | (BinaryOperator::ShiftRight, src1, src2) => {
-                            if src1.is_memory() || src2.is_memory() {
-                                vec![
-                                    Instruction::Mov(asm_type, src1, Operand::Reg(Reg::R10)),
-                                    Instruction::Binary(op, asm_type, Operand::Reg(Reg::R10), src2),
-                                ]
-                            } else {
-                                vec![Instruction::Binary(op, asm_type, src1, src2)]
+                    Instruction::Binary(op, asm_type, src1, src2) => {
+                        // The quadword versions of our three binary arithmetic instructions (addq,
+                        // imulq, and subq) can’t handle immediate values that don’t fit into an
+                        // int, and neither can cmpq or pushq. If the source of any of these
+                        // instructions is a constant outside the range of int, we’ll need to copy
+                        // it into R10 before we can use it.
+                        //
+                        // The movq instruction can move these very large immediate values into
+                        // registers, but not directly into memory, so
+                        //
+                        //    Mov(Quadword, Imm(4294967295), Stack(-16))
+                        //
+                        // should be rewritten as:
+                        //
+                        //    Mov(Quadword, Imm(4294967295), Reg(R10))
+                        //    Mov(Quadword, Reg(R10), Stack(-16))
+                        match (&op, src1, src2) {
+                            (BinaryOperator::Add, src1, src2)
+                            | (BinaryOperator::Sub, src1, src2)
+                            | (BinaryOperator::ShiftLeft, src1, src2)
+                            | (BinaryOperator::ShiftRight, src1, src2) => {
+                                if src1.is_memory() || src2.is_memory() {
+                                    vec![
+                                        Instruction::Mov(asm_type, src1, Operand::Reg(Reg::R10)),
+                                        Instruction::Binary(
+                                            op,
+                                            asm_type,
+                                            Operand::Reg(Reg::R10),
+                                            src2,
+                                        ),
+                                    ]
+                                } else {
+                                    vec![Instruction::Binary(op, asm_type, src1, src2)]
+                                }
+                            }
+                            (BinaryOperator::Mul, src1, Operand::Stack(src2))
+                            | (BinaryOperator::And, src1, Operand::Stack(src2))
+                            | (BinaryOperator::Or, src1, Operand::Stack(src2))
+                            | (BinaryOperator::Xor, src1, Operand::Stack(src2)) => vec![
+                                Instruction::Mov(
+                                    asm_type,
+                                    Operand::Stack(src2),
+                                    Operand::Reg(Reg::R11),
+                                ),
+                                Instruction::Binary(op, asm_type, src1, Operand::Reg(Reg::R11)),
+                                Instruction::Mov(
+                                    asm_type,
+                                    Operand::Reg(Reg::R11),
+                                    Operand::Stack(src2),
+                                ),
+                            ],
+                            (op, src1, src2) => {
+                                vec![Instruction::Binary(*op, asm_type, src1, src2)]
                             }
                         }
-                        (BinaryOperator::Mul, src1, Operand::Stack(src2))
-                        | (BinaryOperator::And, src1, Operand::Stack(src2))
-                        | (BinaryOperator::Or, src1, Operand::Stack(src2))
-                        | (BinaryOperator::Xor, src1, Operand::Stack(src2)) => vec![
-                            Instruction::Mov(
-                                asm_type,
-                                Operand::Stack(src2),
-                                Operand::Reg(Reg::R11),
-                            ),
-                            Instruction::Binary(op, asm_type, src1, Operand::Reg(Reg::R11)),
-                            Instruction::Mov(
-                                asm_type,
-                                Operand::Reg(Reg::R11),
-                                Operand::Stack(src2),
-                            ),
-                        ],
-                        (op, src1, src2) => vec![Instruction::Binary(*op, asm_type, src1, src2)],
-                    },
+                    }
                     Instruction::Cmp(asm_type, op1, Operand::Imm(op2)) => vec![
                         Instruction::Mov(asm_type, Operand::Imm(op2), Operand::Reg(Reg::R11)),
                         Instruction::Cmp(asm_type, op1, Operand::Reg(Reg::R11)),
